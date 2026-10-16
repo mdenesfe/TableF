@@ -3,6 +3,7 @@ package core
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/mdenesfe/TableF/internal/driver"
@@ -155,5 +156,108 @@ func TestApplyChangesRollsBack(t *testing.T) {
 	res, _ := svc.ExecuteQuery(id, "SELECT v FROM t")
 	if res[0].Rows[0][0] != "a" {
 		t.Fatalf("update was not rolled back: %v", res[0].Rows)
+	}
+}
+
+func TestCatalog(t *testing.T) {
+	svc, id := newSQLite(t)
+	if _, err := svc.ExecuteQuery(id, `CREATE TABLE a (id INTEGER PRIMARY KEY); CREATE VIEW v AS SELECT * FROM a;`); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := svc.GetCatalog(id, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]string{}
+	for _, tb := range cat.Tables {
+		kinds[tb.Name] = tb.Type
+	}
+	if kinds["a"] != "table" || kinds["v"] != "view" {
+		t.Fatalf("tables: %+v", cat.Tables)
+	}
+	if cat.Security {
+		t.Fatal("SQLite has no users or roles to list")
+	}
+	p, err := svc.ListPrincipals(id, "")
+	if err != nil || len(p) != 0 {
+		t.Fatalf("principals: %v %v", p, err)
+	}
+}
+
+func TestTableInfo(t *testing.T) {
+	svc, id := newSQLite(t)
+	if _, err := svc.ExecuteQuery(id, `CREATE TABLE a (id INTEGER PRIMARY KEY AUTOINCREMENT, n TEXT); CREATE INDEX a_n ON a(n); INSERT INTO a (n) VALUES ('x');`); err != nil {
+		t.Fatal(err)
+	}
+	fields, err := svc.GetTableInfo(id, "", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range fields {
+		if f.Value != nil {
+			got[f.Key] = *f.Value
+		}
+	}
+	if got["kind"] != "table" || got["index_count"] != "1" || got["autoincrement"] != "yes" || got["last_autoincrement"] != "1" {
+		t.Fatalf("fields: %v", got)
+	}
+	if _, err := svc.GetTableInfo(id, "", "missing"); err == nil {
+		t.Fatal("expected an error for a missing table")
+	}
+}
+
+func TestSavedQueries(t *testing.T) {
+	svc := NewService(NewStore(filepath.Join(t.TempDir(), "connections.json")))
+	if _, err := svc.SaveQuery(SavedQuery{Name: "  "}); err == nil {
+		t.Fatal("expected an error for an empty name")
+	}
+	q, err := svc.SaveQuery(SavedQuery{Name: " Top customers ", SQL: "SELECT 1", ConnectionID: "c1"})
+	if err != nil || q.ID == "" || q.Name != "Top customers" || q.Updated == "" {
+		t.Fatalf("save: %+v %v", q, err)
+	}
+	q.SQL = "SELECT 2"
+	if _, err := svc.SaveQuery(q); err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.ListSavedQueries()
+	if err != nil || len(list) != 1 || list[0].SQL != "SELECT 2" {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	if err := svc.DeleteSavedQuery(q.ID); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := svc.ListSavedQueries(); len(list) != 0 {
+		t.Fatalf("after delete: %+v", list)
+	}
+}
+
+func TestIndexes(t *testing.T) {
+	svc, id := newSQLite(t)
+	if _, err := svc.ExecuteQuery(id, `CREATE TABLE a (id INTEGER, n TEXT, m TEXT UNIQUE, PRIMARY KEY (id, n)); CREATE INDEX a_nm ON a(n, m);`); err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.GetIndexes(id, "", "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]driver.Index{}
+	for _, ix := range list {
+		byName[ix.Name] = ix
+	}
+	nm, ok := byName["a_nm"]
+	if !ok || strings.Join(nm.Columns, ",") != "n,m" || nm.Unique || nm.Primary || !strings.Contains(nm.Definition, "CREATE INDEX") {
+		t.Fatalf("a_nm: %+v (all: %+v)", nm, list)
+	}
+	var pk, uq int
+	for _, ix := range list {
+		if ix.Primary {
+			pk++
+		} else if ix.Unique {
+			uq++
+		}
+	}
+	if pk != 1 || uq != 1 || len(list) != 3 {
+		t.Fatalf("indexes: %+v", list)
 	}
 }

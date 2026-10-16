@@ -19,3 +19,22 @@ export function panel(node: HTMLElement, { side = 'left', duration = 240 }: { si
 		css: (t: number) => `${prop}: ${-(1 - t) * w}px; opacity: ${Math.min(1, t * 1.6)};`
 	};
 }
+
+/** The loading screen dissolves: a soft fade while it drifts slightly larger. */
+export function dissolve(_node: HTMLElement, { duration = 460 }: { duration?: number } = {}) {
+	return {
+		duration: still() ? 0 : duration,
+		easing: ease,
+		css: (t: number) => `opacity: ${t}; transform: scale(${1.03 - 0.03 * t});`
+	};
+}
+
+/** A page entering: fades in while rising a few pixels into place. */
+export function arrive(_node: HTMLElement, { duration = 380, delay = 0 }: { duration?: number; delay?: number } = {}) {
+	return {
+		duration: still() ? 0 : duration,
+		delay: still() ? 0 : delay,
+		easing: ease,
+		css: (t: number) => `opacity: ${t}; transform: translateY(${(1 - t) * 6}px);`
+	};
+}

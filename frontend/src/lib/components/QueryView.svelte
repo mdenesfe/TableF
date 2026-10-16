@@ -1,14 +1,14 @@
 <script lang="ts">
-	import { AlignLeft, CircleAlert, CircleCheck, CircleX, Columns3, Play, Square } from '@lucide/svelte';
+	import { AlignLeft, Bookmark, CircleAlert, CircleCheck, CircleX, Columns3, Play, Square } from '@lucide/svelte';
 	import { format } from 'sql-formatter';
 	import { dialogs } from '#lib/dialog.svelte.ts';
 	import type { Grid } from '#lib/export.ts';
 	import ExportMenu from './ExportMenu.svelte';
 	import { drag } from '#lib/drag.ts';
 	import { formatterOf, isSQL } from '#lib/engines.ts';
-	import { api } from '#lib/api.ts';
+	import { api, isMac, modLabel, targetIn } from '#lib/api.ts';
 	import { prefs } from '#lib/prefs.svelte.ts';
-	import { isDestructive, sourceTable, statementRanges } from '#lib/sql.ts';
+	import { firstTable, isDestructive, sourceTable, statementRanges } from '#lib/sql.ts';
 	import { compareCells, nextSort, type Sort } from '#lib/sort.ts';
 	import { app, type Tab } from '#lib/state.svelte.ts';
 	import type { Cell, QueryResult } from '#lib/types.ts';
@@ -86,8 +86,14 @@
 	// Replaced on every change (never mutated), so plain references suffice.
 	let edits = $state.raw(new Map<Cell[], Record<string, Cell>>());
 	let removed = $state.raw(new Set<Cell[]>());
-	const dirty = $derived(edits.size > 0 || removed.size > 0);
+	const pendingCount = $derived(edits.size + removed.size);
+	const dirty = $derived(pendingCount > 0);
+	const DISCARD_KEYS = isMac ? '⇧⌘⌫' : 'Ctrl+Shift+⌫';
 	const editable = $derived(!!source && !!app.session?.features?.edit);
+
+	// Files are named after what they hold: the queried table, else the tab.
+	const resultName = $derived(source?.table ?? (result && firstTable(result.statement)) ?? tab.title.replace(/\.sql$/, ''));
+	const exportName = $derived(current === -1 ? 'messages' : resultName);
 
 	async function detectSource(r: QueryResult | undefined) {
 		edits = new Map();
@@ -182,14 +188,23 @@
 		removed = new Set();
 	}
 
+	// The saved query this tab edits, and whether the editor differs from it.
+	const saved = $derived(tab.savedId ? app.savedQueries.find((q) => q.id === tab.savedId) : undefined);
+	const unsaved = $derived(!!saved && saved.sql !== tab.sql);
+
 	function keydown(e: KeyboardEvent) {
 		if (tab.id !== app.activeTabId) return;
 		if (e.shiftKey && e.altKey && e.code === 'KeyF') {
 			e.preventDefault();
 			formatSql();
-		} else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && dirty) {
+		} else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+			// ⌘S commits pending result edits; otherwise it saves the query (⇧⌘S: as a new one).
 			e.preventDefault();
-			commit();
+			if (dirty) commit();
+			else app.saveQueryTab(tab, e.shiftKey);
+		} else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'Backspace' && dirty && !targetIn(e, '.cm-editor, input, textarea')) {
+			e.preventDefault();
+			discardEdits();
 		}
 	}
 
@@ -200,6 +215,13 @@
 		layout = emptyLayout();
 	}
 	const fmtTime = (d: Date) => d.toLocaleTimeString([], { hour12: false });
+
+	// Tabs opened by "Select top N rows" and the like run once on open.
+	$effect(() => {
+		if (!tab.autorun || !app.session) return;
+		tab.autorun = false;
+		untrack(() => run(tab.sql));
+	});
 
 	async function run(sql: string) {
 		if (!app.session || running || !sql.trim()) return;
@@ -293,19 +315,33 @@
 				{/each}
 				<button class="rtab" class:on={current === -1} onclick={() => (current = -1)}>Messages</button>
 
-				{#if exportable}
-					<span class="gap"></span>
-					<ExportMenu source={exportSource} name={current === -1 ? 'messages' : 'result'} />
-				{/if}
+				<span class="gap"></span>
+				<ExportMenu source={exportSource} name={exportName} disabled={!exportable} />
 			</div>
 
 			<div class="bar-right" onpointerdown={(e) => e.stopPropagation()} role="group" aria-label="Editor actions">
+				<button
+					class="ctl icon save"
+					class:unsaved
+					onclick={(e) => app.saveQueryTab(tab, e.shiftKey)}
+					title={saved ? `Save “${saved.name}” (${modLabel}S) · ⇧ click: save as new` : `Save query (${modLabel}S)`}
+				>
+					<Bookmark size={14} fill={saved ? 'currentColor' : 'none'} />
+				</button>
 				{#if isSQL(app.session?.driver ?? 'postgres')}<button class="ctl icon" onclick={formatSql} title="Format SQL (⇧⌥F)"><AlignLeft size={14} /></button
 					>{/if}
-				{#if dirty}
-					<span class="pending mono">{edits.size + removed.size} pending</span>
-					<button class="ctl" onclick={discardEdits}>Discard</button>
-					<button class="ctl commit" onclick={commit} title="Commit (⌘S)">Commit</button>
+				{#if editable && current !== -1}
+					<button class="ctl" onclick={discardEdits} disabled={!dirty} title="Discard changes ({DISCARD_KEYS})">Discard <kbd>{DISCARD_KEYS}</kbd></button>
+					<button
+						class="ctl commit"
+						onclick={commit}
+						disabled={!dirty}
+						title={dirty ? `Commit ${pendingCount} change${pendingCount === 1 ? '' : 's'} (${modLabel}S)` : 'Nothing to commit'}
+					>
+						Commit
+						{#if dirty}{#key pendingCount}<span class="badge">{pendingCount}</span>{/key}{/if}
+						<kbd>{modLabel}S</kbd>
+					</button>
 				{/if}
 				<div class="run-group">
 					{#if running}
@@ -368,6 +404,7 @@
 								columns={gridColumns}
 								row={shownRows[detailRow]}
 								title={`row ${detailRow + 1}`}
+								table={resultName}
 								{editable}
 								changed={(c) => !!edits.get(sortedRows[detailRow!]) && result!.columns[c] in edits.get(sortedRows[detailRow!])!}
 								onedit={(c, v) => onedit(detailRow!, c, v)}
@@ -479,6 +516,23 @@
 		font-size: 12.5px;
 		font-weight: 500;
 	}
+	.ctl.save {
+		position: relative;
+	}
+	.ctl.save :global(svg) {
+		color: var(--brand-ink);
+	}
+	/* Edited since the last save. */
+	.ctl.save.unsaved::after {
+		content: '';
+		position: absolute;
+		top: 0.2rem;
+		right: 0.2rem;
+		width: 0.35rem;
+		height: 0.35rem;
+		border-radius: 50%;
+		background: var(--brand-ink);
+	}
 	.ctl.icon {
 		width: 1.75rem;
 		padding: 0;
@@ -510,17 +564,41 @@
 	.gap {
 		width: 0.5rem;
 	}
-	.pending {
-		font-size: 11px;
-		color: var(--muted-foreground);
+	.ctl:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	.ctl kbd {
+		padding: 0 0.25rem;
+		border-radius: 0.2rem;
+		background: color-mix(in oklch, currentColor 12%, transparent);
+		font-family: var(--font-mono);
+		font-size: 10px;
+		line-height: 1.05rem;
+		opacity: 0.75;
 	}
 	.ctl.commit {
 		background: var(--brand);
 		border-color: var(--brand);
 		color: #fff;
 	}
-	.ctl.commit:hover {
+	.ctl.commit:hover:not(:disabled) {
 		filter: brightness(1.15);
+	}
+	/* Pending changes, counted on the Commit button. */
+	.badge {
+		display: inline-grid;
+		place-items: center;
+		min-width: 1.05rem;
+		height: 1.05rem;
+		padding: 0 0.25rem;
+		border-radius: 999px;
+		background: var(--warning);
+		color: #000;
+		font-size: 10px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		animation: tf-pop var(--dur) var(--ease-out) both;
 	}
 	.editable {
 		margin-left: auto;

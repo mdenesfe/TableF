@@ -1,27 +1,38 @@
 <script lang="ts">
-	import { Columns3, Filter, KeyRound, Link2, Play, Plus, X } from '@lucide/svelte';
+	import { Columns3, Filter, Info, Play, Plus, X } from '@lucide/svelte';
 	import Pagination from './Pagination.svelte';
-	import { api, targetIn } from '#lib/api.ts';
+	import { api, isMac, modLabel, targetIn } from '#lib/api.ts';
 	import { splitFilter } from '#lib/sql.ts';
 	import { dialogs } from '#lib/dialog.svelte.ts';
-	import { nextSort, type Sort } from '#lib/sort.ts';
+	import { compareCells, nextSort, type Sort } from '#lib/sort.ts';
+	import { kindOf, type CellKind } from '#lib/celltype.ts';
+	import { isSQL } from '#lib/engines.ts';
 	import { load as loadStored, save as saveStored } from '#lib/storage.ts';
 	import { prefs } from '#lib/prefs.svelte.ts';
-	import { app } from '#lib/state.svelte.ts';
-	import type { Cell, ChangeSet, Column, ColumnMatch, ForeignKey, Table } from '#lib/types.ts';
+	import { app, type TableViewKind } from '#lib/state.svelte.ts';
+	import type { Cell, ChangeSet, Column, ColumnMatch, ForeignKey, Index, Table } from '#lib/types.ts';
+	import { bytes } from '#lib/format.ts';
 	import { untrack } from 'svelte';
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-	import DataGrid, { COLUMN_MIME, emptyLayout, type GridItem, type GridLayout, type PastedCell } from './DataGrid.svelte';
+	import DataGrid, { COLUMN_MIME, emptyLayout, type GridColumn, type GridItem, type GridLayout, type PastedCell } from './DataGrid.svelte';
 	import FieldsPanel from './FieldsPanel.svelte';
 	import RecordPane from './RecordPane.svelte';
+	import TableDetails from './TableDetails.svelte';
 	import SqlLine from './SqlLine.svelte';
 	import RelationPeek from './RelationPeek.svelte';
 
-	let { table, active, initialFilter = '' }: { table: Table; active: boolean; initialFilter?: string } = $props();
+	let {
+		table,
+		active,
+		initialFilter = '',
+		initialView = 'data'
+	}: { table: Table; active: boolean; initialFilter?: string; initialView?: TableViewKind } = $props();
 
 	const GROUP_PAGE = 100;
 
-	let view = $state<'data' | 'structure'>('data');
+	// svelte-ignore state_referenced_locally
+	let view = $state<TableViewKind>(initialView);
+
 	let columns = $state<Column[]>([]);
 	let foreignKeys = $state<ForeignKey[]>([]);
 	let referencedBy = $state<ForeignKey[]>([]);
@@ -71,14 +82,134 @@
 		return () => clearTimeout(id);
 	});
 
+	// ---------- indexes (loaded when the Indexes view is first shown) ----------
+	let indexes = $state.raw<Index[] | null>(null);
+	let indexError = $state('');
+	let indexSeq = 0;
+	async function loadIndexes() {
+		if (!app.session) return;
+		const n = ++indexSeq;
+		indexError = '';
+		try {
+			const list = await api.getIndexes(app.session.id, table.schema, table.name);
+			if (n === indexSeq) indexes = list;
+		} catch (e) {
+			if (n === indexSeq) ((indexes = []), (indexError = (e as Error).message));
+		}
+	}
+	$effect(() => {
+		if (view === 'indexes' && indexes === null) untrack(loadIndexes);
+	});
+
+	// ---------- structure / index row details ----------
+	let selCol = $state<number | null>(null);
+	let selIx = $state<number | null>(null);
+	const fact = (name: string) => ({ name });
+	const yesNo = (b: boolean) => (b ? 'YES' : 'NO');
+	const colPane = $derived.by(() => {
+		const c = selCol === null ? undefined : columns[selCol];
+		if (!c) return null;
+		const fk = foreignKeys.find((f) => f.column === c.name);
+		const refs = referencedBy.filter((f) => f.refColumn === c.name).map((f) => `${f.table}.${f.column}`);
+		const inIndexes = (indexes ?? []).filter((x) => x.columns.includes(c.name)).map((x) => x.name);
+		const facts: [string, Cell][] = [
+			['column_name', c.name],
+			['data_type', c.type],
+			['ordinal_position', selCol! + 1],
+			['is_nullable', yesNo(c.nullable)],
+			['column_default', c.default],
+			['primary_key', yesNo(c.primaryKey)],
+			['references', fk ? `${fk.refSchema ? fk.refSchema + '.' : ''}${fk.refTable}.${fk.refColumn}` : null],
+			['foreign_key', fk?.name ?? null],
+			['referenced_by', refs.length ? refs.join('\n') : null],
+			...(indexes ? ([['indexes', inIndexes.length ? inIndexes.join('\n') : null]] as [string, Cell][]) : [])
+		];
+		return { title: c.name, columns: facts.map(([k]) => fact(k)), row: facts.map(([, v]) => v) };
+	});
+	const ixPane = $derived.by(() => {
+		const x = selIx === null ? undefined : indexes?.[selIx];
+		if (!x) return null;
+		const facts: [string, Cell][] = [
+			['index_name', x.name],
+			['columns', x.columns.join('\n') || null],
+			['method', x.method || null],
+			['is_unique', yesNo(x.unique)],
+			['is_primary', yesNo(x.primary)],
+			...(x.size >= 0 ? ([['size', `${bytes(x.size)} (${x.size.toLocaleString()} bytes)`]] as [string, Cell][]) : []),
+			...(x.scans >= 0 ? ([['scans', x.scans]] as [string, Cell][]) : []),
+			['definition', x.definition || null]
+		];
+		return { title: x.name, columns: facts.map(([k]) => fact(k)), row: facts.map(([, v]) => v) };
+	});
+
+	// ---------- structure and indexes as read-only grids ----------
+	let structSort = $state<Sort>({ column: '', dir: '' });
+	let ixSort = $state<Sort>({ column: '', dir: '' });
+	let structLayout = $state<GridLayout>(emptyLayout());
+	let ixLayout = $state<GridLayout>(emptyLayout());
+
+	/** Rows sorted by the header sort; source maps a shown row back to its item. */
+	function sortedGrid(columns: GridColumn[], rows: Cell[][], sort: Sort) {
+		const source = rows.map((_, i) => i);
+		const c = columns.findIndex((x) => x.name === sort.column);
+		if (c >= 0 && sort.dir) {
+			const dir = sort.dir === 'asc' ? 1 : -1;
+			source.sort((a, b) => compareCells(rows[a][c], rows[b][c], dir));
+		}
+		return { columns, rows: source.map((i) => rows[i]), source };
+	}
+
+	const structGrid = $derived(
+		sortedGrid(
+			[{ name: 'column_name' }, { name: 'data_type' }, { name: 'is_nullable' }, { name: 'column_default' }, { name: 'key' }, { name: 'references' }],
+			columns.map((c) => [c.name, c.type, c.nullable ? 'YES' : 'NO', c.default, c.primaryKey ? 'PRIMARY' : null, relations[c.name] ?? null]),
+			structSort
+		)
+	);
+
+	const ixGrid = $derived(
+		sortedGrid(
+			[
+				{ name: 'index_name' },
+				{ name: 'columns' },
+				{ name: 'method' },
+				{ name: 'constraint' },
+				{ name: 'size' },
+				{ name: 'scans', type: 'number' },
+				{ name: 'definition' }
+			],
+			(indexes ?? []).map((x) => [
+				x.name,
+				x.columns.join(', '),
+				x.method || null,
+				x.primary ? 'PRIMARY' : x.unique ? 'UNIQUE' : null,
+				x.size >= 0 ? bytes(x.size) : null,
+				x.scans >= 0 ? x.scans : null,
+				x.definition || null
+			]),
+			ixSort
+		)
+	);
+
 	// ---------- pending edits ----------
 	const edits = new SvelteMap<number, Record<string, Cell>>();
 	const deleted = new SvelteSet<number>();
 	let inserted = $state<Cell[][]>([]);
 	let selectedRows = $state(new Set<number>());
 	let detailRow = $state<number | null>(null);
+	// Table details stay open by default (shared by every table tab).
+	const DETAILS_KEY = 'tablef.tableDetails.open';
+	let detailsOpen = $state(loadStored(DETAILS_KEY, true));
+	function toggleDetails() {
+		// With a record open, the button switches the pane back to the details.
+		detailsOpen = detailRow !== null || !detailsOpen;
+		detailRow = null;
+		saveStored(DETAILS_KEY, detailsOpen);
+	}
 
-	const dirty = $derived(edits.size + deleted.size + inserted.length > 0);
+	const pendingCount = $derived(edits.size + deleted.size + inserted.length);
+	const dirty = $derived(pendingCount > 0);
+	const DISCARD_KEYS = isMac ? '⇧⌘⌫' : 'Ctrl+Shift+⌫';
 	const keyColumns = $derived.by(() => {
 		const pk = columns.filter((c) => c.primaryKey).map((c) => c.name);
 		return pk.length ? pk : columns.map((c) => c.name);
@@ -86,13 +217,22 @@
 	const editable = $derived(table.type === 'table' && columns.length > 0 && app.session?.features?.edit !== false);
 	const canGroup = $derived(app.session?.features?.groups !== false);
 	// The filter line speaks the engine's own language.
-	const filterHint = $derived(
-		{
-			mongodb: '{ status: "paid", amount: { $gt: 100 } }',
-			redis: 'user:1*  (key pattern)',
-			elasticsearch: "status = 'paid' AND amount > 100"
-		}[app.session?.features?.family ?? ''] ?? "status = 'paid' AND amount > 100 ORDER BY created_at DESC"
-	);
+	const sqlFilter = $derived(isSQL(app.session?.driver ?? 'postgres'));
+	// Column names as they can be typed: bare when that is valid, quoted otherwise.
+	const ident = (name: string) => (/^[a-z_][a-z0-9_]*$/.test(name) ? name : app.quoteIdent(name));
+	// The hint is built from this table's own columns instead of a made-up example.
+	const filterHint = $derived.by(() => {
+		const family = app.session?.features?.family ?? '';
+		if (family === 'mongodb') return '{ field: "value" }  — a MongoDB filter';
+		if (family === 'redis') return 'user:1*  (key pattern)';
+		const pick = (k: CellKind) => columns.find((c) => kindOf(c.type) === k);
+		const key = columns.find((c) => c.primaryKey) ?? pick('number') ?? columns[0];
+		const text = pick('text');
+		const when = pick('datetime') ?? pick('date');
+		if (!key) return 'condition, optionally followed by ORDER BY';
+		const cond = text && text !== key ? `${ident(text.name)} LIKE '%…%'` : `${ident(key.name)} = …`;
+		return `${cond} ORDER BY ${ident((when ?? key).name)} DESC`;
+	});
 	const pages = $derived(Math.max(1, Math.ceil(total / limit)));
 	const gridColumns = $derived(columns.map((c) => ({ name: c.name, type: c.type, primaryKey: c.primaryKey, nullable: c.nullable })));
 
@@ -237,6 +377,8 @@
 	// Loads can overlap (fast paging, sorting); only the latest one may apply.
 	let loadSeq = 0;
 	async function load() {
+		indexes = null; // refetched when the Indexes view shows
+		selCol = selIx = null;
 		if (!app.session) return;
 		const seq = ++loadSeq;
 		loading = true;
@@ -321,8 +463,14 @@
 	async function setSort(column: string) {
 		if (!(await guard())) return;
 		sort = nextSort(sort, column);
-		// A header sort replaces an ORDER BY typed in the filter line.
-		if (parts.order) filter = filterInput = parts.where;
+		if (sqlFilter) {
+			// The filter line always shows the query in effect: the header sort is
+			// written into it as ORDER BY, to edit, extend or delete like any text.
+			const order = sort.dir ? `ORDER BY ${ident(sort.column)} ${sort.dir.toUpperCase()}` : '';
+			filter = filterInput = [parts.where, order].filter(Boolean).join(' ');
+		} else if (parts.order) {
+			filter = filterInput = parts.where;
+		}
 		page = 0;
 		load();
 	}
@@ -330,8 +478,11 @@
 	async function applyFilter() {
 		if (!(await guard())) return;
 		filter = filterInput.trim();
-		// A typed ORDER BY takes over from the header sort.
-		if (splitFilter(filter).order) sort = { column: '', dir: '' };
+		// The ORDER BY in the line is what sorts. The header arrow stays only while
+		// the line still holds exactly the ORDER BY the header sort wrote.
+		const typed = splitFilter(filter).order;
+		const fromHeader = sort.dir ? `${ident(sort.column)} ${sort.dir.toUpperCase()}` : '';
+		if (sqlFilter ? typed !== fromHeader : !!typed) sort = { column: '', dir: '' };
 		page = 0;
 		load();
 	}
@@ -520,6 +671,9 @@
 		if (mod && key === 's') {
 			e.preventDefault();
 			commit();
+		} else if (mod && e.shiftKey && e.key === 'Backspace' && dirty) {
+			e.preventDefault();
+			discard();
 		} else if (mod && key === 'r') {
 			e.preventDefault();
 			guard().then((ok) => {
@@ -544,8 +698,8 @@
 		} else if (mod && key === 'i' && editable) {
 			e.preventDefault();
 			addRow();
-		} else if (e.key === 'Escape' && detailRow !== null) {
-			detailRow = null;
+		} else if (e.key === 'Escape' && (detailRow !== null || selCol !== null || selIx !== null)) {
+			detailRow = selCol = selIx = null;
 		}
 	}
 </script>
@@ -625,17 +779,31 @@
 		{/if}
 
 		<div class="end">
+			<button class="tool" class:on={detailsOpen && detailRow === null} onclick={toggleDetails} title="Table details">
+				<Info size={14} />
+			</button>
 			<div class="toggle">
 				<button class:on={view === 'data'} onclick={() => (view = 'data')}>Data</button>
 				<button class:on={view === 'structure'} onclick={() => (view = 'structure')}>Structure</button>
+				<button class:on={view === 'indexes'} onclick={() => (view = 'indexes')}>Indexes</button>
 			</div>
-			{#if dirty}
-				<span class="pending mono">{edits.size + deleted.size + inserted.length} pending</span>
-				<button class="add-row" onclick={discard}>Discard</button>
-				<button class="add-row primary" onclick={commit} title="⌘S">Commit</button>
-			{:else if editable && view === 'data'}
-				<button class="add-row" onclick={addRow} title="Insert row (⌘I)"><Plus size={13} /> Row</button>
+			{#if editable && view === 'data'}
+				<button class="add-row" onclick={addRow} title="Insert row ({modLabel}I)"><Plus size={13} /> Row</button>
 			{/if}
+			<!-- Always there; usable once something is pending. -->
+			<button class="add-row" onclick={discard} disabled={!dirty} title="Discard changes ({DISCARD_KEYS})">
+				Discard <kbd>{DISCARD_KEYS}</kbd>
+			</button>
+			<button
+				class="add-row primary"
+				onclick={commit}
+				disabled={!dirty}
+				title={dirty ? `Commit ${pendingCount} change${pendingCount === 1 ? '' : 's'} (${modLabel}S)` : 'Nothing to commit'}
+			>
+				Commit
+				{#if dirty}{#key pendingCount}<span class="badge">{pendingCount}</span>{/key}{/if}
+				<kbd>{modLabel}S</kbd>
+			</button>
 		</div>
 	</div>
 
@@ -672,32 +840,32 @@
 					bind:selectedRows
 					bind:layout
 				/>
+			{:else if view === 'structure'}
+				<DataGrid
+					columns={structGrid.columns}
+					rows={structGrid.rows}
+					sort={structSort}
+					onsort={(c) => (structSort = nextSort(structSort, c))}
+					onactivate={(r) => (selCol = structGrid.source[r])}
+					onerror={(m) => app.fail(m)}
+					bind:layout={structLayout}
+				/>
+			{:else if indexes === null}
+				<p class="ix-note">Loading indexes…</p>
+			{:else if indexError}
+				<p class="ix-note err">{indexError}</p>
+			{:else if !indexes.length}
+				<p class="ix-note">No indexes on {table.name}.</p>
 			{:else}
-				<div class="structure mono">
-					<table>
-						<thead>
-							<tr><th class="n">#</th><th>column_name</th><th>data_type</th><th>is_nullable</th><th>column_default</th><th>key</th></tr>
-						</thead>
-						<tbody>
-							{#each columns as c, i (c.name)}
-								<tr>
-									<td class="n muted">{i + 1}</td>
-									<td class="name">{c.name}</td>
-									<td class="t-type">{c.type}</td>
-									<td class={c.nullable ? 'muted' : ''}>{c.nullable ? 'YES' : 'NO'}</td>
-									<td
-										>{#if c.default === null}<span class="null">NULL</span>{:else}{c.default}{/if}</td
-									>
-									<td
-										>{#if c.primaryKey}<span class="key"><span class="icon-box"><KeyRound /></span> primary</span>{/if}{#if relations[c.name]}<span class="key"
-												><span class="icon-box"><Link2 /></span> {relations[c.name]}</span
-											>{/if}</td
-									>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
+				<DataGrid
+					columns={ixGrid.columns}
+					rows={ixGrid.rows}
+					sort={ixSort}
+					onsort={(c) => (ixSort = nextSort(ixSort, c))}
+					onactivate={(r) => (selIx = ixGrid.source[r])}
+					onerror={(m) => app.fail(m)}
+					bind:layout={ixLayout}
+				/>
 			{/if}
 		</div>
 		{#if view === 'data' && detailRow !== null && rows[detailRow]}
@@ -708,11 +876,34 @@
 				referencedBy={r < base.length ? referencedBy : []}
 				row={rows[r]}
 				title={detailTitle}
+				table={table.name}
 				editable={editable && !deleted.has(r)}
 				changed={(c) => !!edits.get(r) && columns[c].name in edits.get(r)!}
 				onedit={(c, v) => onedit(r, c, v)}
 				onclose={() => (detailRow = null)}
 			/>
+		{:else if view === 'structure' && colPane}
+			<RecordPane
+				kind="column"
+				fieldsLabel="Properties"
+				columns={colPane.columns}
+				row={colPane.row}
+				title={colPane.title}
+				table={table.name}
+				onclose={() => (selCol = null)}
+			/>
+		{:else if view === 'indexes' && ixPane}
+			<RecordPane
+				kind="index"
+				fieldsLabel="Properties"
+				columns={ixPane.columns}
+				row={ixPane.row}
+				title={ixPane.title}
+				table={table.name}
+				onclose={() => (selIx = null)}
+			/>
+		{:else if detailsOpen}
+			<TableDetails {table} {columns} {foreignKeys} {referencedBy} total={!grouped && !error && columns.length ? total : null} onclose={toggleDetails} />
 		{/if}
 	</div>
 
@@ -754,6 +945,8 @@
 		background: var(--card);
 	}
 	.toolbar {
+		/* Narrow panes drop the shortcut hints (they stay in the tooltips). */
+		container-type: inline-size;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -942,21 +1135,51 @@
 	.add-row :global(svg) {
 		color: var(--muted-foreground);
 	}
-	.add-row:hover {
+	.add-row:hover:not(:disabled) {
 		background: var(--accent);
+	}
+	.add-row:disabled {
+		opacity: 0.4;
+		cursor: default;
+	}
+	@container (max-width: 760px) {
+		.add-row kbd {
+			display: none;
+		}
+	}
+	.add-row kbd {
+		padding: 0 0.25rem;
+		border-radius: 0.2rem;
+		background: color-mix(in oklch, currentColor 12%, transparent);
+		font-family: var(--font-mono);
+		font-size: 10px;
+		line-height: 1.05rem;
+		opacity: 0.75;
 	}
 	.add-row.primary {
 		background: var(--primary);
 		border-color: var(--primary);
 		color: var(--primary-foreground);
+		transition: opacity var(--dur-fast) ease-out;
 	}
-	.add-row.primary:hover {
+	.add-row.primary:hover:not(:disabled) {
+		background: var(--primary);
 		opacity: 0.9;
 	}
-	.pending {
-		font-size: 11px;
-		color: var(--warning);
-		white-space: nowrap;
+	/* Pending changes, counted on the Commit button. */
+	.badge {
+		display: inline-grid;
+		place-items: center;
+		min-width: 1.05rem;
+		height: 1.05rem;
+		padding: 0 0.25rem;
+		border-radius: 999px;
+		background: var(--warning);
+		color: #000;
+		font-size: 10px;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		animation: tf-pop var(--dur) var(--ease-out) both;
 	}
 	.split {
 		display: flex;
@@ -992,51 +1215,7 @@
 		color: var(--foreground);
 		font-weight: 500;
 	}
-	.structure {
-		height: 100%;
-		overflow: auto;
-	}
-	.structure table {
-		border-collapse: collapse;
-		width: 100%;
-	}
-	.structure th,
-	.structure td {
-		height: 28px;
-		padding: 0 0.6rem;
-		text-align: left;
-		white-space: nowrap;
-		border-bottom: 1px solid var(--border);
-		border-right: 1px solid var(--border);
-	}
-	.structure th:last-child,
-	.structure td:last-child {
-		border-right: none;
-	}
-	.structure th {
-		position: sticky;
-		top: 0;
-		height: 2rem;
-		background: var(--muted);
-		color: var(--muted-foreground);
-		font-family: var(--font-sans);
-		font-weight: 500;
-	}
-	.structure .n {
-		width: 2.5rem;
-		text-align: right;
-		font-size: 11px;
-	}
-	.structure .null {
-		color: var(--muted-foreground);
-		opacity: 0.6;
-		font-size: 11px;
-	}
-	.key {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		margin-right: 0.6rem;
-		font-size: 11px;
+	.ix-note.err {
+		color: var(--destructive);
 	}
 </style>

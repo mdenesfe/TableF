@@ -150,6 +150,8 @@ type Features struct {
 	Groups       bool   `json:"groups"`
 	Edit         bool   `json:"edit"`
 	Transactions bool   `json:"transactions"`
+	// Security: users and roles can be listed (the engine implements Securer).
+	Security bool `json:"security"`
 }
 
 // Optional hooks a Driver may implement. The core falls back to standard SQL.

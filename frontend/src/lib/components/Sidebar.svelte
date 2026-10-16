@@ -5,13 +5,19 @@
 
 <script lang="ts">
 	import { modLabel } from '#lib/api.ts';
-	import { ChevronRight, Eye, Plus, RefreshCw, Search, SquareFunction, Table2, Workflow } from '@lucide/svelte';
+	import { Bookmark, ChevronRight, Eye, Pin, RefreshCw, Search, SquareFunction, Table2, Workflow } from '@lucide/svelte';
 	import { app, routineTitle } from '#lib/state.svelte.ts';
 	import { drag } from '#lib/drag.ts';
 	import { load, save } from '#lib/storage.ts';
+	import { pins } from '#lib/catalogactions.svelte.ts';
+	import CatalogMenu from './CatalogMenu.svelte';
 	import { panel } from '#lib/motion.ts';
 	import DbLogo from './DbLogo.svelte';
-	import type { Routine, Table } from '#lib/types.ts';
+	import HeaderDots from './HeaderDots.svelte';
+	import { prefs } from '#lib/prefs.svelte.ts';
+	import { engine } from '#lib/engines.ts';
+	import type { Routine, SavedQuery, Table } from '#lib/types.ts';
+	import type { MenuTarget } from './CatalogMenu.svelte';
 
 	let { searchInput = $bindable() }: { searchInput?: HTMLInputElement } = $props();
 
@@ -24,8 +30,22 @@
 	// Lower-cased names are computed once per catalog load, not on every keystroke.
 	const inSchema = $derived(app.tables.filter((t) => t.schema === app.schema).map((t) => ({ t, key: t.name.toLowerCase() })));
 	const routinesInSchema = $derived(app.routines.filter((r) => r.schema === app.schema).map((r) => ({ r, key: r.name.toLowerCase() })));
-	const tables = $derived(inSchema.filter((x) => x.t.type === 'table' && (!q || x.key.includes(q))).map((x) => x.t));
-	const views = $derived(inSchema.filter((x) => x.t.type === 'view' && (!q || x.key.includes(q))).map((x) => x.t));
+	// Pinned items come first, otherwise the catalog order is kept.
+	const pinnedFirst = (list: Table[]) => {
+		const pinned = pins.current();
+		if (!pinned.size) return list;
+		const isPinned = (t: Table) => pinned.has(`${t.schema}\u0000${t.name}`);
+		return [...list.filter(isPinned), ...list.filter((t) => !isPinned(t))];
+	};
+	const tables = $derived(pinnedFirst(inSchema.filter((x) => x.t.type === 'table' && (!q || x.key.includes(q))).map((x) => x.t)));
+	const views = $derived(pinnedFirst(inSchema.filter((x) => x.t.type === 'view' && (!q || x.key.includes(q))).map((x) => x.t)));
+
+	// Right-click menu.
+	let menu = $state<{ target: MenuTarget; x: number; y: number } | null>(null);
+	const openMenu = (e: MouseEvent, target: MenuTarget) => {
+		e.preventDefault();
+		menu = { target, x: e.clientX, y: e.clientY };
+	};
 	const routines = $derived(routinesInSchema.filter((x) => !q || x.key.includes(q)).map((x) => x.r));
 
 	// Huge schemas render in pages so the DOM stays small; search narrows further.
@@ -38,12 +58,17 @@
 		void q;
 		shown = {};
 	});
-	const version = $derived(
-		(app.session?.version ?? '')
-			.split(/[\s,]+/)
-			.slice(0, 2)
-			.join(' ')
-	);
+	// The header's digit field, quiet behind the engine name and gone under the refresh button.
+	const FOOTER_MASK = 'linear-gradient(to right, rgb(0 0 0 / 0.35), #000 60%, #000 calc(100% - 3.5rem), transparent calc(100% - 1.5rem))';
+
+	const queries = $derived(app.visibleQueries.filter((x) => !q || x.name.toLowerCase().includes(q)));
+	const queryActive = (sq: SavedQuery) => app.activeTab?.kind === 'query' && app.activeTab.savedId === sq.id;
+
+	// "PostgreSQL 15.8 on x86_64…" → engine "PostgreSQL", release "15.8".
+	const release = $derived.by(() => {
+		const [name = '', ver = ''] = (app.session?.version ?? '').split(/[\s,]+/);
+		return { name: name || engine(app.session?.driver ?? '').label, ver: /\d/.test(ver) ? ver : '' };
+	});
 
 	// While searching every section is open so matches are visible.
 	const isOpen = (key: string) => !!q || !collapsed[key];
@@ -85,16 +110,13 @@
 	}
 </script>
 
-{#snippet section(key: string, label: string, count: number, action?: { title: string; run: () => void })}
+{#snippet section(key: string, label: string, count: number)}
 	<div class="section">
 		<button class="section-toggle" onclick={() => toggle(key)} aria-expanded={isOpen(key)}>
 			<ChevronRight size={12} class={isOpen(key) ? 'chev open' : 'chev'} />
 			<span>{label}</span>
 			{#key count}<span class="count tf-text">{count}</span>{/key}
 		</button>
-		{#if action}
-			<button class="section-act" onclick={action.run} title={action.title}><Plus size={13} /></button>
-		{/if}
 	</div>
 {/snippet}
 
@@ -106,12 +128,41 @@
 	</div>
 
 	<nav class="tree">
-		{@render section('tables', 'Tables', tables.length, { title: 'New table', run: () => app.newTable() })}
+		{#if queries.length || !q}
+			{@render section('queries', 'Saved queries', queries.length)}
+			{#if isOpen('queries')}
+				{#each queries as sq, i (sq.id)}
+					<button
+						class="item"
+						style:--i={i}
+						class:active={queryActive(sq)}
+						onclick={() => app.openSaved(sq)}
+						oncontextmenu={(e) => openMenu(e, { query: sq })}
+						title={sq.sql.length > 400 ? sq.sql.slice(0, 400) + '…' : sq.sql}
+					>
+						<span class="icon-box"><Bookmark /></span>
+						<span>{sq.name}</span>
+					</button>
+				{:else}
+					<p class="empty">{q ? 'No matches' : `Save a query with ${modLabel}S`}</p>
+				{/each}
+			{/if}
+		{/if}
+
+		{@render section('tables', 'Tables', tables.length)}
 		{#if isOpen('tables')}
 			{#each tables.slice(0, limitOf('tables')) as t, i (t.name)}
-				<button class="item" style:--i={i} class:active={tableActive(t)} onclick={() => app.openTable(t)} title={t.name}>
+				<button
+					class="item"
+					style:--i={i}
+					class:active={tableActive(t)}
+					onclick={() => app.openTable(t)}
+					oncontextmenu={(e) => openMenu(e, { table: t })}
+					title={t.name}
+				>
 					<span class="icon-box"><Table2 /></span>
 					<span>{t.name}</span>
+					{#if pins.has(t)}<Pin size={11} class="pinned" aria-label="Pinned" />{/if}
 				</button>
 			{:else}
 				<p class="empty">{app.tablesLoading ? 'Loading…' : q ? 'No matches' : 'No tables'}</p>
@@ -125,9 +176,17 @@
 			{@render section('views', 'Views', views.length)}
 			{#if isOpen('views')}
 				{#each views.slice(0, limitOf('views')) as t, i (t.name)}
-					<button class="item" style:--i={i} class:active={tableActive(t)} onclick={() => app.openTable(t)} title={t.name}>
+					<button
+						class="item"
+						style:--i={i}
+						class:active={tableActive(t)}
+						onclick={() => app.openTable(t)}
+						oncontextmenu={(e) => openMenu(e, { table: t })}
+						title={t.name}
+					>
 						<span class="icon-box"><Eye /></span>
 						<span>{t.name}</span>
+						{#if pins.has(t)}<Pin size={11} class="pinned" aria-label="Pinned" />{/if}
 					</button>
 				{:else}
 					<p class="empty">No views</p>
@@ -147,6 +206,7 @@
 						style:--i={i}
 						class:active={routineActive(r)}
 						onclick={() => app.openRoutine(r)}
+						oncontextmenu={(e) => openMenu(e, { routine: r })}
 						title={`${r.name}(${r.arguments})${r.returnType ? ` → ${r.returnType}` : ''}`}
 					>
 						<span class="icon-box"
@@ -165,14 +225,20 @@
 	</nav>
 
 	<footer class="status">
-		{#if app.session}<DbLogo driver={app.session.driver} size={14} />{/if}
-		{#key version}<span class="driver tf-text">{version || app.session?.driver}</span>{/key}
+		{#if prefs.value.headerAnimation}<HeaderDots color={app.connection?.color} mask={FOOTER_MASK} />{/if}
+		{#if app.session}<DbLogo driver={app.session.driver} color={app.connection?.color} size={16} />{/if}
+		{#key release.name + release.ver}
+			<span class="driver tf-text"
+				>{release.name}{#if release.ver}<span class="ver mono">{release.ver}</span>{/if}</span
+			>
+		{/key}
 		<button class="refresh" onclick={() => app.loadTables()} title="Refresh schema" disabled={app.tablesLoading}>
-			<RefreshCw size={12} class={app.tablesLoading ? 'spin' : ''} />
+			<RefreshCw size={13} class={app.tablesLoading ? 'spin' : ''} />
 		</button>
 	</footer>
 
 	<div class="resize" role="separator" aria-orientation="vertical" aria-label="Resize sidebar" onpointerdown={resizeStart}></div>
+	{#if menu}<CatalogMenu target={menu.target} x={menu.x} y={menu.y} onclose={() => (menu = null)} />{/if}
 </aside>
 
 <style>
@@ -264,27 +330,6 @@
 		font-variant-numeric: tabular-nums;
 		opacity: 0.8;
 	}
-	.section-act {
-		display: grid;
-		place-items: center;
-		width: 1.4rem;
-		height: 1.4rem;
-		margin-left: 0.15rem;
-		padding: 0;
-		border: none;
-		border-radius: 0.3rem;
-		background: transparent;
-		color: var(--muted-foreground);
-		opacity: 0;
-	}
-	.section:hover .section-act,
-	.section-act:focus-visible {
-		opacity: 1;
-	}
-	.section-act:hover {
-		background: var(--sidebar-accent);
-		color: var(--foreground);
-	}
 	.item {
 		animation: tf-drift var(--dur-slow) var(--ease-out) both;
 		animation-delay: calc(min(var(--i, 0), 20) * 12ms);
@@ -309,6 +354,12 @@
 	}
 	.item :global(.icon-box) {
 		opacity: 0.82;
+	}
+	.item :global(.pinned) {
+		flex: none;
+		margin-left: auto;
+		color: var(--muted-foreground);
+		transform: rotate(45deg);
 	}
 	.item:hover {
 		background: color-mix(in oklch, var(--sidebar-accent) 70%, transparent);
@@ -346,22 +397,43 @@
 		font-size: 12px;
 	}
 	.status {
+		position: relative;
+		isolation: isolate;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
 		height: 2.1rem;
 		flex: none;
-		padding: 0 0.4rem 0 0.85rem;
+		padding: 0 0.35rem 0 0.75rem;
 		border-top: 1px solid var(--sidebar-border);
-		color: var(--muted-foreground);
-		font-size: 11.5px;
+		font-size: 12px;
+		/* Same wash as the header, so the window's rounded corner sits on one color. */
+		background: color-mix(in oklab, var(--tint, var(--sidebar)) var(--tint-amount), var(--sidebar));
+	}
+	.status .refresh,
+	.status .ver {
+		color: color-mix(in oklab, var(--foreground) 72%, transparent);
+	}
+	.status .refresh:hover:not(:disabled) {
+		color: var(--foreground);
+		background: color-mix(in oklab, var(--tint, var(--sidebar)) calc(var(--tint-amount) + 8%), var(--sidebar));
 	}
 	.driver {
 		flex: 1;
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
+		color: var(--foreground);
+		font-weight: 500;
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.ver {
+		font-size: 11px;
+		font-weight: 400;
+		color: var(--muted-foreground);
 	}
 	.refresh {
 		display: grid;

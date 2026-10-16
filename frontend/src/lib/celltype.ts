@@ -69,3 +69,22 @@ export function boolText(v: unknown): 'true' | 'false' | 'null' {
 	if (v === false || v === 0 || v === 'f' || v === 'false' || v === '0') return 'false';
 	return 'null';
 }
+
+// Long SQL type names and their usual short spellings, for compact labels.
+const SHORT_TYPES: [RegExp, string][] = [
+	[/^timestamp(\(\d+\))? with time zone$/, 'timestamptz'],
+	[/^timestamp(\(\d+\))? without time zone$/, 'timestamp'],
+	[/^time(\(\d+\))? with time zone$/, 'timetz'],
+	[/^time(\(\d+\))? without time zone$/, 'time'],
+	[/^character varying/, 'varchar'],
+	[/^character\b/, 'char'],
+	[/^double precision$/, 'float8'],
+	[/^user-defined$/, 'enum']
+];
+
+/** A short label for a column type: "timestamp with time zone" → "timestamptz". */
+export function shortType(type = ''): string {
+	const t = type.trim().toLowerCase();
+	for (const [re, short] of SHORT_TYPES) if (re.test(t)) return t.replace(re, short);
+	return t;
+}

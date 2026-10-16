@@ -11,7 +11,12 @@ import type {
 	TableData,
 	TableDataRequest,
 	GroupRequest,
-	GroupResult
+	GroupResult,
+	Catalog,
+	Principal,
+	InfoField,
+	SavedQuery,
+	Index
 } from './types';
 
 type Bound = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -19,12 +24,27 @@ type Bound = Record<string, (...args: unknown[]) => Promise<unknown>>;
 declare global {
 	interface Window {
 		go?: { core?: { Service?: Bound }; main?: { Desktop?: Bound } };
+		/** Wails' window runtime, present in the desktop app. */
+		runtime?: {
+			WindowMinimise(): void;
+			WindowToggleMaximise(): void;
+			WindowIsMaximised(): Promise<boolean>;
+			WindowIsFullscreen(): Promise<boolean>;
+			WindowUnfullscreen(): void;
+			Quit(): void;
+		};
 	}
 }
 
 export const isDesktop = typeof window !== 'undefined' && !!window.go?.core?.Service;
 
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.userAgent);
+
+/** The desktop app on macOS: the header leaves room for the traffic lights. */
+export const isMacDesktop = isDesktop && isMac;
+
+/** The desktop app on Windows/Linux: the window is frameless and the header draws its own controls. */
+export const hasWindowControls = isDesktop && !isMac;
 
 /** Label for the main modifier key. */
 export const modLabel = isMac ? '⌘' : 'Ctrl';
@@ -101,6 +121,15 @@ export const api = {
 	listSchemas: (id: string) => call<string[]>('ListSchemas', id),
 	createSchema: (id: string, name: string) => call<void>('CreateSchema', id, name),
 	listRoutines: (id: string) => call<Routine[]>('ListRoutines', id),
+	/** Tables, views, routines and schemas of any database on the server ('' = current). */
+	getCatalog: (id: string, database: string) => call<Catalog>('GetCatalog', id, database),
+	/** Users and roles of a database ('' = current). */
+	listPrincipals: (id: string, database: string) => call<Principal[]>('ListPrincipals', id, database),
+	listSavedQueries: () => call<SavedQuery[]>('ListSavedQueries'),
+	saveQuery: (q: SavedQuery) => call<SavedQuery>('SaveQuery', q),
+	deleteSavedQuery: (id: string) => call<void>('DeleteSavedQuery', id),
+	getIndexes: (id: string, schema: string, table: string) => call<Index[]>('GetIndexes', id, schema, table),
+	getTableInfo: (id: string, schema: string, table: string) => call<InfoField[]>('GetTableInfo', id, schema, table),
 	getRoutineDefinition: (id: string, r: Routine) => call<string>('GetRoutineDefinition', id, r),
 	getColumns: (id: string, schema: string, table: string) => call<Column[]>('GetColumns', id, schema, table),
 	getTableData: (id: string, req: TableDataRequest) => call<TableData>('GetTableData', id, req),

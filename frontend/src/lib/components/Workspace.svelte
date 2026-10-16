@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Database, Eye, Keyboard, LogOut, PanelLeft, Plus, Settings, SquareFunction, SquareTerminal, Table2, X } from '@lucide/svelte';
 	import { tick, untrack } from 'svelte';
-	import { isDesktop, isMac, modLabel, tabModLabel, targetIn } from '#lib/api.ts';
+	import { modLabel, tabModLabel, targetIn, isMacDesktop } from '#lib/api.ts';
 	import Picker from './Picker.svelte';
 	import { groupsOf, measure, resizeAt, type Divider, type Side } from '#lib/layout.ts';
 	import { app, MAX_PANES, routineTitle } from '#lib/state.svelte.ts';
@@ -9,6 +9,7 @@
 	import QueryView from './QueryView.svelte';
 	import Shortcuts from './Shortcuts.svelte';
 	import HeaderDots from './HeaderDots.svelte';
+	import FullscreenLights from './FullscreenLights.svelte';
 	import { engine } from '#lib/engines.ts';
 	import { prefs } from '#lib/prefs.svelte.ts';
 	import Sidebar from './Sidebar.svelte';
@@ -17,7 +18,6 @@
 	let sidebarOpen = $state(true);
 	let helpOpen = $state(false);
 	let sidebarSearch = $state<HTMLInputElement>();
-	const macInset = isDesktop && isMac;
 	const routineTitles = $derived(new Set(app.routines.map(routineTitle)));
 
 	// The header carries a soft wash of the connection's color, so it's clear which database you're in.
@@ -94,6 +94,20 @@
 			const pos = d.dir === 'row' ? (ev.clientX - rect.left) / rect.width : (ev.clientY - rect.top) / rect.height;
 			app.layout = resizeAt(app.layout, d, pos);
 		});
+	}
+
+	// A vertical wheel scrolls the tab strip sideways.
+	function stripWheel(e: WheelEvent) {
+		const el = e.currentTarget as HTMLElement;
+		if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || el.scrollWidth <= el.clientWidth) return;
+		el.scrollLeft += e.deltaY; // wheel listeners are passive; nothing else scrolls here
+	}
+
+	/** Scrolls a tab into view when it becomes the active one. */
+	function revealWhen(node: HTMLElement, active: boolean) {
+		const reveal = (on: boolean) => on && node.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+		reveal(active);
+		return { update: reveal };
 	}
 
 	function openMenu(e: MouseEvent, id: string) {
@@ -196,7 +210,7 @@
 
 <svelte:window onkeydown={keydown} onpointerdown={(e) => menu && !(e.target as HTMLElement).closest('.menu') && (menu = null)} />
 
-<div class="shell">
+<div class="shell" style:--tint={tint || undefined}>
 	<header
 		class="topbar drag"
 		class:tinted={!!tint}
@@ -206,7 +220,7 @@
 		aria-busy={phase === 'loading'}
 	>
 		{#if prefs.value.headerAnimation}<HeaderDots color={tint} loading={phase === 'loading'} />{/if}
-		{#if macInset}<div class="traffic"></div>{/if}
+		{#if isMacDesktop}<div class="traffic"><FullscreenLights /></div>{/if}
 		<button class="icon no-drag" onclick={() => (sidebarOpen = !sidebarOpen)} title="Toggle sidebar ({modLabel}B)">
 			<PanelLeft size={15} />
 		</button>
@@ -277,9 +291,11 @@
 							style:width={pct(r.w)}
 							ondragover={accepts}
 							ondrop={(e) => dropOnStrip(e, g)}
+							onwheel={stripWheel}
 						>
 							{#each app.tabs.filter((t) => t.group === g) as t (t.id)}
 								<div
+									use:revealWhen={t.id === app.activeByGroup[g]}
 									class="tab"
 									class:on={t.id === app.activeByGroup[g]}
 									class:dim={app.split && app.focusedGroup !== g}
@@ -313,7 +329,9 @@
 									<button class="tab-close" onclick={() => app.closeTab(t.id)} aria-label="Close tab"><X size={12} /></button>
 								</div>
 							{/each}
-							<button class="tab-add" onclick={() => ((app.focusedGroup = g), app.openQuery())} title="New query ({tabModLabel}T)"><Plus size={14} /></button>
+							<button class="tab-add" onclick={() => ((app.focusedGroup = g), app.openQuery())} title="New SQL query ({tabModLabel}T)"
+								><Plus size={13} /> SQL</button
+							>
 						</div>
 					{/if}
 				{/each}
@@ -333,7 +351,7 @@
 						role="tabpanel"
 					>
 						{#if t.kind === 'table'}
-							<TableView table={t.table} initialFilter={t.filter ?? ''} active={t.id === app.activeTabId} />
+							<TableView table={t.table} initialFilter={t.filter ?? ''} initialView={t.view} active={t.id === app.activeTabId} />
 						{:else}
 							<QueryView tab={t} />
 						{/if}
@@ -436,15 +454,19 @@
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
-		height: 2.75rem;
+		height: var(--chrome-h);
+		transition: height var(--dur-slow) var(--ease-out);
 		flex: none;
-		padding: 0 0.6rem;
+		padding: 0 calc(0.6rem + var(--controls-w, 0px)) 0 0.6rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--sidebar);
 	}
 	/* A soft wash of the connection color; text and controls keep their normal colors. */
 	.topbar.tinted {
 		background: color-mix(in oklab, var(--tint) var(--tint-amount), var(--sidebar));
+	}
+	.topbar.tinted .icon {
+		color: color-mix(in oklab, var(--foreground) 82%, transparent);
 	}
 	.topbar.tinted .icon:hover,
 	.topbar.tinted :global(.trigger:hover:not(:disabled)),
@@ -502,9 +524,18 @@
 			opacity: 0;
 		}
 	}
+	/* Room for the macOS traffic lights (see --traffic-w in app.css). */
+	/* Room for the traffic lights: macOS' own, or FullscreenLights in fullscreen. */
+	.traffic :global(.lights) {
+		display: none;
+	}
+	:global(:root[data-fullscreen]) .traffic :global(.lights) {
+		display: flex;
+	}
 	.traffic {
-		width: 68px;
+		width: max(0px, calc(var(--traffic-w) - 0.6rem));
 		flex: none;
+		transition: width var(--dur-slow) var(--ease-out);
 	}
 	.icon {
 		display: grid;
@@ -586,10 +617,10 @@
 		background: var(--background);
 		overflow-x: auto;
 	}
+	/* Tabs are as wide as their full name; the strip scrolls when they don't fit. */
 	.tab {
 		display: flex;
 		align-items: center;
-		max-width: 14rem;
 		height: 1.75rem;
 		flex: none;
 		border: 1px solid transparent;
@@ -654,12 +685,16 @@
 		color: var(--foreground);
 	}
 	.tab-add {
-		display: grid;
-		place-items: center;
-		width: 1.6rem;
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
 		height: 1.6rem;
 		flex: none;
-		padding: 0;
+		padding: 0 0.45rem 0 0.35rem;
+		font-family: var(--font-mono);
+		font-size: 11.5px;
+		font-weight: 600;
+		white-space: nowrap;
 		border: none;
 		border-radius: var(--radius);
 		background: transparent;

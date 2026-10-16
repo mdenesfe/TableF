@@ -2,6 +2,7 @@
 	import { sql } from '@codemirror/lang-sql';
 	import { dialectOf } from '#lib/sqldialect.ts';
 	import { isSQL } from '#lib/engines.ts';
+	import { completionLook } from '#lib/completion.ts';
 	import { Compartment, EditorState, Prec } from '@codemirror/state';
 	import { EditorView, keymap, tooltips } from '@codemirror/view';
 	import { basicSetup } from 'codemirror';
@@ -68,8 +69,6 @@
 			boxShadow: 'var(--shadow)',
 			overflow: 'hidden'
 		},
-		'.cm-tooltip-autocomplete ul li': { padding: '3px 10px !important' },
-		'.cm-tooltip-autocomplete ul li[aria-selected]': { background: 'var(--accent)', color: 'var(--foreground)' },
 		'.cm-matchingBracket': { background: 'color-mix(in oklab, var(--brand) 22%, transparent)', outline: 'none' }
 	});
 
@@ -109,8 +108,11 @@
 						])
 					),
 					basicSetup,
+					completionLook,
 					// Tooltips (autocomplete) live on <body> so the editor pane never clips them.
-					tooltips({ parent: document.body }),
+					// Popups live on <body> so panes can't clip them. Absolute positioning lets
+					// CodeMirror correct for the interface zoom (it measures the parent's scale).
+					tooltips({ parent: document.body, position: 'absolute' }),
 					options.of(optionExtensions()),
 					syntaxHighlighting(highlight),
 					theme,

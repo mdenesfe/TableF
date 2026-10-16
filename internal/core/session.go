@@ -30,6 +30,15 @@ type session struct {
 
 	metaMu sync.Mutex
 	meta   map[tableKey]tableMeta
+
+	// current is the database the session is in; dial is the config used to
+	// reach the server (through the SSH tunnel when there is one).
+	current string
+	dial    driver.Config
+	// others are pooled connections to other databases on the same server,
+	// opened when the Object Explorer expands them.
+	othersMu sync.Mutex
+	others   map[string]*sql.DB
 }
 
 type tableKey struct{ schema, table string }
@@ -89,6 +98,12 @@ func (s *session) close() {
 	if s.db != nil {
 		s.db.Close()
 	}
+	s.othersMu.Lock()
+	for _, db := range s.others {
+		db.Close()
+	}
+	s.others = nil
+	s.othersMu.Unlock()
 	if s.tun != nil {
 		s.tun.Close()
 	}

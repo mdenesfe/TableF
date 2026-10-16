@@ -45,3 +45,10 @@ test('statementRanges stays linear on long comment blocks and $-heavy scripts', 
 	assert.equal(statementRanges(dollars).length, 5000);
 	assert.ok(performance.now() - start < 500, 'took too long');
 });
+
+test('firstTable names the first table read, also in joins', async () => {
+	const { firstTable } = await import('./sql.ts');
+	assert.equal(firstTable('select * from public."Orders" o join customers c on c.id = o.cid'), 'Orders');
+	assert.equal(firstTable('SELECT count(*) FROM foundations WHERE x = 1'), 'foundations');
+	assert.equal(firstTable('select 1'), null);
+});

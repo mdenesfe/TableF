@@ -6,8 +6,23 @@
 		<meta name="text-scale" content="scale" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" type="image/svg+xml" />
 		%sveltekit.head%
+		<script>
+			// Apply theme and interface size before anything is drawn, so the first
+			// frame already looks right (prefs.svelte.ts takes over once loaded).
+			try {
+				const p = JSON.parse(localStorage.getItem('tablef.prefs') || '{}');
+				const root = document.documentElement;
+				if (p.theme === 'light' || p.theme === 'dark') root.dataset.theme = p.theme;
+				if (p.scale && p.scale !== 1) {
+					root.style.zoom = String(p.scale);
+					root.style.setProperty('--zoom', String(p.scale));
+				}
+			} catch {}
+		</script>
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<!-- Brand color until the start-up animation takes over (Splash.svelte removes it). -->
+		<div id="boot" style="position: fixed; inset: 0; z-index: 1049; background: #0a3d62"></div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 </html>

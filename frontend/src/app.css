@@ -6,6 +6,9 @@
  * oklch palette, no gradients, no bright accents, no scale animations.
  */
 :root {
+	/* Header height; on the desktop app it follows the window chrome (below). */
+	--chrome-h: 2.75rem;
+	--traffic-w: 0px;
 	color-scheme: light;
 	--radius: 0.375rem;
 	--radius-lg: 0.5rem;
@@ -137,6 +140,7 @@ html,
 body {
 	margin: 0;
 	height: 100%;
+	box-sizing: border-box;
 	/* clip, unlike hidden, can't be scrolled by focus or scrollIntoView. */
 	overflow: clip;
 }
@@ -559,8 +563,21 @@ svg.lucide {
 	}
 }
 
-/* Editor tooltips are mounted on <body>; keep them above panes and headers. */
-body > .cm-tooltip,
-.cm-tooltip {
+/* Editor popups are mounted on <body>; keep them above panes and headers. */
+body > .cm-tooltip {
 	z-index: 400;
+}
+
+/* macOS desktop: the traffic lights sit centred in a 52pt title area, so the
+   header matches it whatever the interface zoom (plus its 1px bottom border,
+   which would otherwise lift the row half a point) and leaves room for them.
+   In fullscreen the header draws the lights itself, in the same place
+   (FullscreenLights, chrome_darwin.go). */
+:root[data-platform='mac'] {
+	--chrome-h: calc(52.5px / var(--zoom, 1));
+	--traffic-w: calc(78px / var(--zoom, 1));
+}
+/* Windows/Linux desktop: the header carries its own window controls on the right. */
+:root[data-platform='framed'] {
+	--controls-w: 138px;
 }

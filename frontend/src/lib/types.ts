@@ -57,6 +57,8 @@ export interface Features {
 	groups: boolean;
 	edit: boolean;
 	transactions: boolean;
+	/** Users and roles can be listed. */
+	security: boolean;
 }
 
 export interface Table {
@@ -158,4 +160,48 @@ export interface ChangeSet {
 	updates: RowUpdate[];
 	inserts: Record<string, Cell>[];
 	deletes: Record<string, Cell>[];
+}
+
+/** A user or role, as listed under Security in the Object Explorer. */
+/** A named SQL script; an empty connectionId means every connection lists it. */
+export interface SavedQuery {
+	id: string;
+	name: string;
+	sql: string;
+	connectionId: string;
+	/** Last save time (RFC 3339). */
+	updated: string;
+}
+
+/** An index of a table; size and scans are -1 when the engine doesn't say. */
+export interface Index {
+	name: string;
+	columns: string[];
+	unique: boolean;
+	primary: boolean;
+	method: string;
+	definition: string;
+	size: number;
+	scans: number;
+}
+
+/** One fact about a table (sizes, row estimate, comment…); keys are snake_case. */
+export interface InfoField {
+	key: string;
+	value: string | null;
+}
+
+export interface Principal {
+	name: string;
+	kind: 'user' | 'role';
+}
+
+/** What the Object Explorer shows for one database. */
+export interface Catalog {
+	database: string;
+	tables: Table[];
+	routines: Routine[];
+	schemas: string[];
+	/** Whether users and roles can be listed. */
+	security: boolean;
 }

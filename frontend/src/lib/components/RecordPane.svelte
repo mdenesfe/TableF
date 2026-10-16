@@ -11,7 +11,20 @@
 </script>
 
 <script lang="ts">
-	import { ArrowUpRight, CalendarDays, ChevronDown, ChevronRight, CornerDownRight, KeyRound, Link2, X } from '@lucide/svelte';
+	import {
+		ArrowUpRight,
+		CalendarDays,
+		ChevronDown,
+		ChevronRight,
+		CornerDownRight,
+		Columns3,
+		KeyRound,
+		Link2,
+		ListTree,
+		Search,
+		Table2,
+		X
+	} from '@lucide/svelte';
 	import { api } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import { panel } from '#lib/motion.ts';
@@ -19,7 +32,8 @@
 	import { drag } from '#lib/drag.ts';
 	import { load, save } from '#lib/storage.ts';
 	import DatePicker from './DatePicker.svelte';
-	import { boolText, isNumber, kindOf, now, numericOnly, prettyJSON, uuid, type CellKind } from '#lib/celltype.ts';
+	import Select from './Select.svelte';
+	import { boolText, isNumber, kindOf, now, numericOnly, prettyJSON, shortType, uuid, type CellKind } from '#lib/celltype.ts';
 	import type { Cell, ForeignKey } from '#lib/types.ts';
 
 	let {
@@ -31,7 +45,10 @@
 		onedit,
 		onclose,
 		foreignKeys = [],
-		referencedBy = []
+		referencedBy = [],
+		table = '',
+		kind = 'row',
+		fieldsLabel = 'Columns'
 	}: {
 		columns: PaneColumn[];
 		row: Cell[];
@@ -43,6 +60,12 @@
 		foreignKeys?: ForeignKey[];
 		/** References pointing at this table; listed with how many rows point at this one. */
 		referencedBy?: ForeignKey[];
+		/** Table name, used for export file names. */
+		table?: string;
+		/** What the fields describe; picks the header icon. */
+		kind?: 'row' | 'column' | 'index';
+		/** Heading of the non-key fields. */
+		fieldsLabel?: string;
 	} = $props();
 
 	const fkByColumn = $derived(new Map(foreignKeys.map((f) => [f.column, f])));
@@ -97,7 +120,7 @@
 		const idx = columns.map((c, i) => ({ c, i })).filter(({ c }) => !q || c.name.toLowerCase().includes(q));
 		return [
 			{ key: 'pk', label: 'Primary key', items: idx.filter(({ c }) => c.primaryKey) },
-			{ key: 'cols', label: 'Columns', items: idx.filter(({ c }) => !c.primaryKey) }
+			{ key: 'cols', label: fieldsLabel, items: idx.filter(({ c }) => !c.primaryKey) }
 		].filter((g) => g.items.length);
 	});
 
@@ -119,6 +142,12 @@
 		}
 		return s;
 	}
+
+	const boolOptions = [
+		{ value: 'true', label: 'true' },
+		{ value: 'false', label: 'false' },
+		{ value: 'null', label: 'NULL' }
+	] as const satisfies { value: 'true' | 'false' | 'null'; label: string }[];
 
 	let picking = $state<{ i: number; kind: CellKind; x: number; y: number; nullable: boolean } | null>(null);
 	// Each field's text, formatted once per row instead of on every render.
@@ -170,13 +199,23 @@
 	<div class="handle" role="separator" aria-orientation="vertical" aria-label="Resize" onpointerdown={resizeStart}></div>
 
 	<header>
-		<span class="title mono">{title}</span>
-		<ExportMenu source={() => ({ columns: columns.map((c) => c.name), rows: [row] })} name={title.replace(/\W+/g, '_')} single align="right" />
+		<span class="icon-box"
+			>{#if kind === 'column'}<Columns3 />{:else if kind === 'index'}<ListTree />{:else}<Table2 />{/if}</span
+		>
+		{#if table}<span class="title">{table}</span>{/if}
+		<span class="sub mono">{title}</span>
+		<ExportMenu
+			source={() => ({ columns: columns.map((c) => c.name), rows: [row] })}
+			name={[table, title.replace(/\s*=\s*/g, '_')].filter(Boolean).join('_')}
+			single
+			align="right"
+		/>
 		<button class="btn ghost icon xs" onclick={onclose} title="Close (Esc)"><X size={14} /></button>
 	</header>
 
 	<div class="filter">
-		<input class="mono" placeholder="filter fields…" bind:value={filter} spellcheck="false" />
+		<Search size={13} />
+		<input placeholder="Search for field…" bind:value={filter} spellcheck="false" />
 	</div>
 
 	<div class="body">
@@ -204,20 +243,18 @@
 										<span class="icon-box"><Link2 /></span>{f.refTable}
 									</button>
 								{/if}
-								{#if c.type}<span class="type">{c.type}</span>{/if}
+								{#if c.type}<span class="type" title={c.type}>{shortType(c.type)}</span>{/if}
 							</div>
 							{#if editable}
 								{@const kind = kindOf(c.type)}
 								{#if kind === 'bool'}
-									<select
-										class="bool-select mono"
+									<Select
+										mono
+										label={c.name}
 										value={boolText(v)}
-										onchange={(e) => onedit?.(i, e.currentTarget.value === 'null' ? null : e.currentTarget.value === 'true')}
-									>
-										<option value="true">true</option>
-										<option value="false">false</option>
-										{#if c.nullable !== false}<option value="null">NULL</option>{/if}
-									</select>
+										options={c.nullable !== false ? boolOptions : boolOptions.slice(0, 2)}
+										onchange={(x) => onedit?.(i, x === 'null' ? null : x === 'true')}
+									/>
 								{:else}
 									<div class="edit">
 										<textarea
@@ -352,28 +389,46 @@
 	header {
 		display: flex;
 		align-items: center;
-		gap: 0.1rem;
+		gap: 0.45rem;
 		height: 2.5rem;
 		flex: none;
 		padding: 0 0.35rem 0 0.75rem;
 		border-bottom: 1px solid var(--border);
 	}
 	.title {
-		flex: 1;
 		min-width: 0;
-		font-weight: 600;
+		max-width: 60%;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		font-weight: 600;
+	}
+	.sub {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 11.5px;
+		color: var(--muted-foreground);
 	}
 	.filter {
+		position: relative;
 		padding: 0.5rem 0.6rem;
 		border-bottom: 1px solid var(--border);
+	}
+	.filter :global(svg) {
+		position: absolute;
+		left: 1.1rem;
+		top: 50%;
+		transform: translateY(-50%);
+		color: var(--muted-foreground);
 	}
 	.filter input {
 		width: 100%;
 		height: 1.65rem;
-		padding: 0 0.5rem;
+		padding: 0 0.5rem 0 1.75rem;
+		font-size: 12px;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--card);
@@ -387,7 +442,7 @@
 	.body {
 		flex: 1;
 		overflow: auto;
-		padding-bottom: 1rem;
+		padding: 0.15rem 0 1rem;
 	}
 	.group {
 		display: flex;
@@ -404,6 +459,9 @@
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 	}
+	.group :global(svg) {
+		flex: none;
+	}
 	.group:hover {
 		color: var(--foreground);
 	}
@@ -413,7 +471,7 @@
 		letter-spacing: 0;
 	}
 	.field {
-		padding: 0.3rem 0.75rem 0.45rem;
+		padding: 0.2rem 0.75rem 0.4rem;
 	}
 	.field.changed textarea {
 		background: var(--changed);
@@ -422,19 +480,35 @@
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
-		margin-bottom: 0.25rem;
-		font-size: 11px;
+		min-width: 0;
+		height: 1.25rem;
+		margin-bottom: 0.15rem;
+		font-size: 11.5px;
 	}
 	.label :global(svg) {
 		color: var(--muted-foreground);
 	}
 	.name {
-		font-weight: 600;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-weight: 500;
 	}
+	/* Column type as a quiet tag at the right edge, aligned on every row. */
 	.type {
+		flex: none;
+		max-width: 45%;
 		margin-left: auto;
+		padding: 0 0.35rem;
+		border-radius: 0.25rem;
+		background: var(--muted);
 		color: var(--muted-foreground);
-		font-size: 10.5px;
+		font-size: 10px;
+		line-height: 1.1rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.rel {
 		display: inline-flex;
@@ -496,6 +570,7 @@
 		min-height: 1.75rem;
 		padding: 0.3rem 0.5rem;
 		padding-right: 5.5rem;
+		font-size: 12px;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--card);
@@ -511,8 +586,8 @@
 	}
 	textarea::placeholder {
 		color: var(--muted-foreground);
-		opacity: 0.6;
-		font-size: 11px;
+		opacity: 0.55;
+		font-style: italic;
 	}
 	.tools {
 		position: absolute;
@@ -520,12 +595,6 @@
 		right: 0.25rem;
 		display: flex;
 		gap: 0.2rem;
-		opacity: 0;
-		transition: opacity var(--dur-fast) ease-out;
-	}
-	.edit:hover .tools,
-	.edit:focus-within .tools {
-		opacity: 1;
 	}
 	.tool-btn {
 		display: grid;
@@ -542,22 +611,14 @@
 	.tool-btn:hover {
 		color: var(--foreground);
 	}
-	.bool-select {
-		height: 1.75rem;
-		min-width: 7rem;
-		padding: 0 0.45rem;
-		border: 1px solid var(--border);
-		border-radius: var(--radius);
-		background: var(--card);
-		color: var(--foreground);
-		font-size: 12px;
-	}
 	.value {
 		margin: 0;
 		padding: 0.3rem 0.5rem;
 		border: 1px solid var(--border);
 		border-radius: var(--radius);
 		background: var(--card);
+		font-size: 12px;
+		line-height: 1.45;
 		white-space: pre-wrap;
 		word-break: break-word;
 		max-height: 20rem;
@@ -566,7 +627,8 @@
 	}
 	.value.null {
 		color: var(--muted-foreground);
-		font-size: 11px;
+		opacity: 0.55;
+		font-style: italic;
 	}
 	.none {
 		margin: 0;

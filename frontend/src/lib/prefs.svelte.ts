@@ -78,6 +78,7 @@ class PrefsStore {
 		if (this.value.theme === 'system') delete root.dataset.theme;
 		else root.dataset.theme = this.value.theme;
 		root.style.zoom = this.value.scale === 1 ? '' : String(this.value.scale);
+		root.style.setProperty('--zoom', String(this.value.scale));
 		root.style.setProperty('--editor-fs', `${this.value.editorFontSize}px`);
 		if (this.value.reduceMotion) root.dataset.motion = 'reduced';
 		else delete root.dataset.motion;

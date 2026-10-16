@@ -14,6 +14,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/mdenesfe/TableF/internal/core"
@@ -99,17 +100,29 @@ func main() {
 	desktop := &Desktop{}
 
 	err = wails.Run(&options.App{
-		Title:            "TableF",
-		Width:            1280,
-		Height:           800,
-		MinWidth:         900,
-		MinHeight:        560,
-		BackgroundColour: &options.RGBA{R: 24, G: 24, B: 27, A: 1},
+		Title:     "TableF",
+		Width:     1280,
+		Height:    800,
+		MinWidth:  900,
+		MinHeight: 560,
+		// The brand color: the window opens in it, matching the start-up animation.
+		BackgroundColour: &options.RGBA{R: 10, G: 61, B: 98, A: 1},
 		AssetServer:      &assetserver.Options{Assets: ui.Assets()},
-		OnStartup:        func(ctx context.Context) { desktop.ctx = ctx },
-		OnShutdown:       func(context.Context) { svc.Shutdown() },
-		Bind:             []any{svc, desktop},
-		Menu:             appMenu(),
+		OnStartup: func(ctx context.Context) {
+			desktop.ctx = ctx
+			manageWindowChrome(ctx)
+		},
+		OnShutdown: func(context.Context) { svc.Shutdown() },
+		Bind:       []any{svc, desktop},
+		Menu:       appMenu(),
+		// Off macOS the header draws its own window controls (WindowControls.svelte),
+		// so the native frame goes; resizing, snapping and the shadow stay. On macOS
+		// the traffic lights stay native and the header makes room for them.
+		Frameless: goruntime.GOOS != "darwin",
+		Windows: &windows.Options{
+			Theme:                             windows.SystemDefault,
+			DisableFramelessWindowDecorations: false,
+		},
 		Mac: &mac.Options{
 			TitleBar: mac.TitleBarHiddenInset(),
 			About:    &mac.AboutInfo{Title: "TableF", Message: "Free and open source database client."},

@@ -3,6 +3,7 @@
 	import { sql } from '@codemirror/lang-sql';
 	import { dialectOf } from '#lib/sqldialect.ts';
 	import { isSQL } from '#lib/engines.ts';
+	import { completionLook } from '#lib/completion.ts';
 	import { autocompletion, closeBrackets, closeCompletion, completionStatus, type CompletionContext } from '@codemirror/autocomplete';
 	import { EditorState, Prec } from '@codemirror/state';
 	import { EditorView, keymap, placeholder as ph, tooltips } from '@codemirror/view';
@@ -57,11 +58,7 @@
 			borderRadius: '6px',
 			boxShadow: 'var(--shadow)',
 			overflow: 'hidden'
-		},
-		'.cm-tooltip-autocomplete ul': { fontFamily: 'var(--font-mono)', fontSize: '12px', maxHeight: '18rem' },
-		'.cm-tooltip-autocomplete ul li': { padding: '3px 10px !important', lineHeight: '20px' },
-		'.cm-tooltip-autocomplete ul li[aria-selected]': { background: 'var(--accent)', color: 'var(--foreground)' },
-		'.cm-completionDetail': { color: 'var(--muted-foreground)', fontStyle: 'normal', marginLeft: '1rem' }
+		}
 	});
 
 	// Only what makes sense in a filter: this table's columns and condition keywords.
@@ -109,7 +106,9 @@
 			state: EditorState.create({
 				doc: value,
 				extensions: [
-					tooltips({ parent: document.body }),
+					// Popups live on <body> so panes can't clip them. Absolute positioning lets
+					// CodeMirror correct for the interface zoom (it measures the parent's scale).
+					tooltips({ parent: document.body, position: 'absolute' }),
 					EditorState.transactionFilter.of((tr) => (tr.newDoc.lines > 1 ? [] : tr)),
 					Prec.highest(
 						keymap.of([
@@ -130,7 +129,8 @@
 					closeBrackets(),
 					keymap.of([...defaultKeymap, ...historyKeymap]),
 					isSQL(driver) ? sql({ dialect: dialectOf(driver) }) : [],
-					autocompletion({ override: [complete], activateOnTyping: true, icons: false }),
+					autocompletion({ override: [complete], activateOnTyping: true }),
+					completionLook,
 					syntaxHighlighting(highlight),
 					theme,
 					ph(placeholder),

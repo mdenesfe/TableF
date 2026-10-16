@@ -39,6 +39,14 @@ func (p pgCompatible) Columns(ctx context.Context, db *sql.DB, schema, table str
 	return portableColumns(ctx, db, schema, table)
 }
 
+// TableInfo: only Greenplum has PostgreSQL's size functions and statistics views.
+func (p pgCompatible) TableInfo(ctx context.Context, db *sql.DB, schema, table string) ([]InfoField, error) {
+	if p.name != "greenplum" {
+		return []InfoField{}, nil
+	}
+	return p.postgres.TableInfo(ctx, db, schema, table)
+}
+
 // Redshift has no pg_proc arguments helpers; skip routines.
 func (p pgCompatible) Routines(ctx context.Context, db *sql.DB) ([]Routine, error) {
 	if !p.f.Routines {

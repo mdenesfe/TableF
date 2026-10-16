@@ -8,7 +8,7 @@ export interface Sort {
 
 // One collator for every comparison: creating one per call (as
 // localeCompare with options does) is an order of magnitude slower.
-const collator = new Intl.Collator(undefined, { numeric: true });
+export const collator = new Intl.Collator(undefined, { numeric: true });
 
 /** Compares two cells in the given direction; NULLs sort last either way. */
 export function compareCells(x: unknown, y: unknown, dir: 1 | -1): number {

@@ -134,3 +134,12 @@ export function sourceTable(sql: string): { schema: string; table: string } | nu
 	if (!m) return null;
 	return m[2] ? { schema: unquote(m[1]), table: unquote(m[2]) } : { schema: '', table: unquote(m[1]) };
 }
+
+/** The first table a query reads from (also for joins), unquoted; null if none. */
+export function firstTable(sql: string): string | null {
+	const s = sql.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?\*\//g, ' ');
+	const m = new RegExp(String.raw`\bfrom\s+(${IDENT}(?:\s*\.\s*${IDENT})*)`, 'iu').exec(s);
+	if (!m) return null;
+	const parts = m[1].split(/\s*\.\s*/);
+	return unquote(parts[parts.length - 1]);
+}

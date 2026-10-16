@@ -55,21 +55,26 @@ func (s *Store) load() ([]driver.Config, error) {
 	return out, nil
 }
 
-// save replaces the file atomically: the list is written to a temporary file
-// that is synced to disk before it is renamed over the old one, so a crash
-// leaves either the old or the new list, never a truncated one.
+// save writes the list of connections, without the UI-only secrets.
 func (s *Store) save(list []driver.Config) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
-	}
 	for i := range list {
 		list[i].Secrets = nil // UI-only; never persisted
 	}
-	b, err := json.MarshalIndent(list, "", "  ")
+	return writeJSON(s.path, list)
+}
+
+// writeJSON replaces a file atomically: the value is written to a temporary
+// file that is synced to disk before it is renamed over the old one, so a
+// crash leaves either the old or the new content, never a truncated one.
+func writeJSON(path string, v any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
+	tmp := path + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
@@ -85,7 +90,7 @@ func (s *Store) save(list []driver.Config) error {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	return os.Rename(tmp, path)
 }
 
 // List returns every saved connection, secrets included.

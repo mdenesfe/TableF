@@ -5,7 +5,19 @@
 	import { binaryField, smooth, type Field } from '#lib/binaryfield.ts';
 	import { prefs } from '#lib/prefs.svelte.ts';
 
-	let { color = '', loading = false }: { color?: string; loading?: boolean } = $props();
+	// Fades out under the window controls and header buttons so they stay legible.
+	const HEADER_MASK = 'linear-gradient(to right, transparent, #000 7rem, #000 calc(100% - 13rem), transparent calc(100% - 4rem))';
+
+	let {
+		color = '',
+		loading = false,
+		mask = HEADER_MASK
+	}: {
+		color?: string;
+		loading?: boolean;
+		/** CSS mask-image over the field (where the digits may show). */
+		mask?: string;
+	} = $props();
 
 	let canvas: HTMLCanvasElement;
 	let field: Field | undefined;
@@ -55,7 +67,7 @@
 	});
 </script>
 
-<canvas class="dots" bind:this={canvas} aria-hidden="true"></canvas>
+<canvas class="dots" bind:this={canvas} style:mask-image={mask} aria-hidden="true"></canvas>
 
 <style>
 	.dots {

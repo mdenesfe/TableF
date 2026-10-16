@@ -2,9 +2,13 @@ import { prefs } from '#lib/prefs.svelte.ts';
 import { familyOf } from '#lib/engines.ts';
 import { load, remove, save } from '#lib/storage.ts';
 import { dialogs } from '#lib/dialog.svelte.ts';
+import { collator } from '#lib/sort.ts';
 import { api } from './api';
 import { groupsOf, leaf, removeLeaf, splitLeaf, type LayoutNode, type Side } from './layout';
-import type { Cell, ConnectionConfig, Routine, SessionInfo, Table } from './types';
+import type { Cell, ConnectionConfig, Routine, SavedQuery, SessionInfo, Table } from './types';
+
+/** The views of a table tab. */
+export type TableViewKind = 'data' | 'structure' | 'indexes';
 
 /** A SQL literal for a cell value. */
 export function sqlLiteral(v: Cell): string {
@@ -15,8 +19,18 @@ export function sqlLiteral(v: Cell): string {
 
 /** group is the pane (see layout) the tab lives in. */
 export type Tab =
-	| { id: string; kind: 'table'; title: string; group: number; table: Table; filter?: string }
-	| { id: string; kind: 'query'; title: string; group: number; sql: string };
+	| { id: string; kind: 'table'; title: string; group: number; table: Table; filter?: string; view?: TableViewKind }
+	| {
+			id: string;
+			kind: 'query';
+			title: string;
+			group: number;
+			sql: string;
+			/** Run the SQL once when the tab opens. */
+			autorun?: boolean;
+			/** The saved query this tab edits; saving updates it in place. */
+			savedId?: string;
+	  };
 
 /** How many panes a layout may hold. */
 export const MAX_PANES = 8;
@@ -26,7 +40,7 @@ interface SavedSession {
 	connectionId: string;
 	database: string;
 	schema: string;
-	tabs: ({ kind: 'table'; table: Table; filter?: string; group?: number } | { kind: 'query'; title: string; sql: string; group?: number })[];
+	tabs: ({ kind: 'table'; table: Table; filter?: string; group?: number } | { kind: 'query'; title: string; sql: string; group?: number; savedId?: string })[];
 	active: number;
 	layout?: LayoutNode;
 }
@@ -123,8 +137,9 @@ class AppState {
 
 	async loadConnections() {
 		try {
-			const [list, ids] = await Promise.all([api.listConnections(), this.engineIds ? null : api.engines()]);
+			const [list, ids, queries] = await Promise.all([api.listConnections(), this.engineIds ? null : api.engines(), api.listSavedQueries()]);
 			this.connections = list;
+			this.savedQueries = queries;
 			if (ids) this.engineIds = new Set(ids);
 		} catch (e) {
 			this.fail(e);
@@ -153,8 +168,13 @@ class AppState {
 		}
 	}
 
+	/** The connection being opened, for the full-page connecting animation. */
+	connecting = $state<ConnectionConfig | null>(null);
+
 	async connect(c: ConnectionConfig, openQuery = true) {
 		this.busy = true;
+		this.connecting = c;
+		const started = performance.now();
 		try {
 			this.session = await this.track(this.withHostTrust(c, () => api.connect(c.id)));
 			this.connection = c;
@@ -166,6 +186,9 @@ class AppState {
 			this.fail(e);
 		} finally {
 			this.busy = false;
+			// Keep the animation up long enough to read, so fast connects don't flicker.
+			const wait = Math.max(0, 650 - (performance.now() - started));
+			setTimeout(() => this.connecting === c && (this.connecting = null), wait);
 		}
 	}
 
@@ -198,7 +221,9 @@ class AppState {
 			database: this.session.database,
 			schema: this.schema,
 			tabs: this.tabs.map((t) =>
-				t.kind === 'table' ? { kind: 'table', table: t.table, filter: t.filter, group: t.group } : { kind: 'query', title: t.title, sql: t.sql, group: t.group }
+				t.kind === 'table'
+					? { kind: 'table', table: t.table, filter: t.filter, group: t.group }
+					: { kind: 'query', title: t.title, sql: t.sql, group: t.group, savedId: t.savedId }
 			),
 			active: Math.max(
 				0,
@@ -233,7 +258,7 @@ class AppState {
 			}
 			for (const t of saved.tabs) {
 				this.focusedGroup = groupsOf(this.layout).includes(t.group ?? 0) ? (t.group ?? 0) : groupsOf(this.layout)[0];
-				if (t.kind === 'query') this.openQuery(t.sql, t.title);
+				if (t.kind === 'query') this.openQuery(t.sql, t.title, t.savedId);
 				else {
 					const table = this.tables.find((x) => x.schema === t.table.schema && x.name === t.table.name);
 					if (table) this.openTable(table, t.filter ?? '');
@@ -304,28 +329,132 @@ class AppState {
 	}
 
 	/** Opens a table tab; with a filter (e.g. from a relation) it gets its own tab. */
-	openTable(table: Table, filter = '') {
-		const existing = this.tabs.find((t) => t.kind === 'table' && t.table.schema === table.schema && t.table.name === table.name && (t.filter ?? '') === filter);
+	/** Opens a table, reusing its tab unless `newTab`; `view` picks data or structure. */
+	openTable(table: Table, filter = '', opts: { newTab?: boolean; view?: TableViewKind } = {}) {
+		const existing =
+			!opts.newTab &&
+			!opts.view &&
+			this.tabs.find((t) => t.kind === 'table' && t.table.schema === table.schema && t.table.name === table.name && (t.filter ?? '') === filter);
 		if (existing) {
 			this.activeTabId = existing.id;
 			return;
 		}
 		const title = table.schema && table.schema !== 'main' && table.schema !== 'public' ? `${table.schema}.${table.name}` : table.name;
-		const tab: Tab = { id: nextId(), kind: 'table', title, group: this.focusedGroup, table, filter: filter || undefined };
+		const tab: Tab = { id: nextId(), kind: 'table', title, group: this.focusedGroup, table, filter: filter || undefined, view: opts.view };
 		this.tabs.push(tab);
 		this.activeTabId = tab.id;
 	}
 
-	openQuery(sql = '', title = '') {
-		const existing = title && this.tabs.find((t) => t.kind === 'query' && t.title === title);
+	/** Opens a query tab and runs its SQL right away. */
+	runQuery(sql: string, title = '') {
+		const n = this.tabs.filter((t) => t.kind === 'query').length + 1;
+		const tab: Tab = { id: nextId(), kind: 'query', title: title || `query_${n}.sql`, group: this.focusedGroup, sql, autorun: true };
+		this.tabs.push(tab);
+		this.activeTabId = tab.id;
+	}
+
+	openQuery(sql = '', title = '', savedId?: string) {
+		const existing = title && this.tabs.find((t) => t.kind === 'query' && t.title === title && t.savedId === savedId);
 		if (existing) {
 			this.activeTabId = existing.id;
 			return;
 		}
 		const n = this.tabs.filter((t) => t.kind === 'query').length + 1;
-		const tab: Tab = { id: nextId(), kind: 'query', title: title || `query_${n}.sql`, group: this.focusedGroup, sql };
+		const tab: Tab = { id: nextId(), kind: 'query', title: title || `query_${n}.sql`, group: this.focusedGroup, sql, savedId };
 		this.tabs.push(tab);
 		this.activeTabId = tab.id;
+	}
+
+	// ---------- saved queries ----------
+	savedQueries = $state.raw<SavedQuery[]>([]);
+
+	/** Saved queries of the current connection plus the shared ones, by name. */
+	get visibleQueries(): SavedQuery[] {
+		const id = this.connection?.id ?? '';
+		return this.savedQueries.filter((q) => !q.connectionId || q.connectionId === id).sort((a, b) => collator.compare(a.name, b.name));
+	}
+
+	async loadSavedQueries() {
+		try {
+			this.savedQueries = await api.listSavedQueries();
+		} catch (e) {
+			this.fail(e);
+		}
+	}
+
+	/** Opens a saved query, or focuses the tab that already edits it. */
+	openSaved(q: SavedQuery) {
+		const existing = this.tabs.find((t) => t.kind === 'query' && t.savedId === q.id);
+		if (existing) this.activeTabId = existing.id;
+		else this.openQuery(q.sql, q.name, q.id);
+	}
+
+	/**
+	 * Saves a query tab. A tab that edits a saved query updates it; otherwise
+	 * (or with asNew) the user names a new one, which the tab then edits.
+	 */
+	async saveQueryTab(tab: Extract<Tab, { kind: 'query' }>, asNew = false) {
+		const current = !asNew && tab.savedId ? this.savedQueries.find((q) => q.id === tab.savedId) : undefined;
+		let name = current?.name;
+		if (!name) {
+			const picked = await dialogs.prompt({
+				title: 'Save query',
+				message: 'Saved queries are listed in the sidebar for this connection.',
+				placeholder: 'Query name',
+				value: tab.title.replace(/\.sql$/, ''),
+				confirmLabel: 'Save'
+			});
+			name = picked?.trim();
+			if (!name) return;
+		}
+		try {
+			const saved = await api.saveQuery({
+				id: current?.id ?? '',
+				name,
+				sql: tab.sql,
+				connectionId: current ? current.connectionId : (this.connection?.id ?? ''),
+				updated: ''
+			});
+			this.savedQueries = [...this.savedQueries.filter((q) => q.id !== saved.id), saved];
+			tab.savedId = saved.id;
+			tab.title = saved.name;
+			this.schedulePersist();
+			this.notify('info', `Saved “${saved.name}”`);
+		} catch (e) {
+			this.fail(e);
+		}
+	}
+
+	async renameSaved(q: SavedQuery) {
+		const picked = await dialogs.prompt({ title: 'Rename query', value: q.name, placeholder: 'Query name', confirmLabel: 'Rename' });
+		const name = picked?.trim();
+		if (!name || name === q.name) return;
+		try {
+			const saved = await api.saveQuery({ ...q, name });
+			this.savedQueries = this.savedQueries.map((x) => (x.id === saved.id ? saved : x));
+			for (const t of this.tabs) if (t.kind === 'query' && t.savedId === saved.id) t.title = saved.name;
+			this.schedulePersist();
+		} catch (e) {
+			this.fail(e);
+		}
+	}
+
+	async deleteSaved(q: SavedQuery) {
+		const ok = await dialogs.confirm({
+			title: 'Delete saved query',
+			message: `Delete “${q.name}”? Open tabs keep their SQL.`,
+			confirmLabel: 'Delete',
+			danger: true
+		});
+		if (!ok) return;
+		try {
+			await api.deleteSavedQuery(q.id);
+			this.savedQueries = this.savedQueries.filter((x) => x.id !== q.id);
+			for (const t of this.tabs) if (t.kind === 'query' && t.savedId === q.id) t.savedId = undefined;
+			this.schedulePersist();
+		} catch (e) {
+			this.fail(e);
+		}
 	}
 
 	async openRoutine(r: Routine) {

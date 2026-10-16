@@ -1,15 +1,15 @@
 <script lang="ts">
 	// "Export" dropdown: copy as Markdown / JSON, download CSV / Excel.
 	import { Braces, ChevronDown, Copy, Download, Sheet } from '@lucide/svelte';
-	import { api } from '#lib/api.ts';
-	import { app } from '#lib/state.svelte.ts';
-	import { toCSV, toJSON, toMarkdown, toXLSX, type ExportKind, type Grid } from '#lib/export.ts';
+	import type { ExportKind, Grid } from '#lib/export.ts';
+	import { exportGrid } from '#lib/exportaction.ts';
 
 	let {
 		source,
 		name,
 		single = false,
-		align = 'left'
+		align = 'left',
+		disabled = false
 	}: {
 		/** Called when an item is picked, so it always exports what is on screen. */
 		source: () => Grid | null;
@@ -18,7 +18,13 @@
 		/** One record: JSON is an object and Markdown a field/value table. */
 		single?: boolean;
 		align?: 'left' | 'right';
+		/** Shown but not usable (nothing to export right now). */
+		disabled?: boolean;
 	} = $props();
+
+	$effect(() => {
+		if (disabled) open = false;
+	});
 
 	let open = $state(false);
 	let root: HTMLDivElement;
@@ -26,23 +32,7 @@
 	async function run(kind: ExportKind) {
 		open = false;
 		const g = source();
-		if (!g) return;
-		const n = g.rows.length;
-		const what = single ? 'row' : `${n.toLocaleString()} row${n === 1 ? '' : 's'}`;
-		if (kind === 'json' || kind === 'markdown') {
-			let out: string;
-			if (single && kind === 'json') out = JSON.stringify(Object.fromEntries(g.columns.map((c, i) => [c, g.rows[0]?.[i] ?? null])), null, 2);
-			else if (single) out = toMarkdown({ columns: ['field', 'value'], rows: g.columns.map((c, i) => [c, g.rows[0]?.[i]]) });
-			else out = kind === 'json' ? toJSON(g) : toMarkdown(g);
-			await navigator.clipboard?.writeText(out).catch(() => {});
-			app.notify('info', `Copied ${what} as ${kind === 'json' ? 'JSON' : 'Markdown'}`);
-		} else if (kind === 'csv') {
-			if (await api.saveFile(`${name}.csv`, toCSV(g))) app.notify('info', `Saved ${what} as CSV`);
-		} else {
-			const data = toXLSX(g, name);
-			if (await api.saveFile(`${name}.xlsx`, data, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'))
-				app.notify('info', `Saved ${what} as Excel`);
-		}
+		if (g) await exportGrid(kind, g, name, single);
 	}
 </script>
 
@@ -52,7 +42,15 @@
 />
 
 <div class="export" bind:this={root}>
-	<button class="trigger" class:open onclick={() => (open = !open)} aria-haspopup="menu" aria-expanded={open}>Export <ChevronDown size={13} /></button>
+	<button
+		class="trigger"
+		class:open
+		{disabled}
+		title={disabled ? 'Nothing to export' : undefined}
+		onclick={() => (open = !open)}
+		aria-haspopup="menu"
+		aria-expanded={open}>Export <ChevronDown size={13} /></button
+	>
 	{#if open}
 		<div class="menu" class:right={align === 'right'} role="menu">
 			<button role="menuitem" onclick={() => run('markdown')}><Copy size={14} /> Copy as Markdown</button>
@@ -82,9 +80,13 @@
 		font-weight: 500;
 		white-space: nowrap;
 	}
-	.trigger:hover,
+	.trigger:hover:not(:disabled),
 	.trigger.open {
 		background: var(--accent);
+	}
+	.trigger:disabled {
+		opacity: 0.45;
+		cursor: default;
 	}
 	.menu {
 		position: absolute;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toCSV, toJSON, toMarkdown, toXLSX } from './export.ts';
+import { exportFileName, toCSV, toJSON, toMarkdown, toXLSX } from './export.ts';
 
 const grid = {
 	columns: ['id', 'name'],
@@ -34,4 +34,11 @@ test('XLSX is a zip with the expected parts', () => {
 	assert.deepEqual([...bytes.subarray(0, 4)], [0x50, 0x4b, 0x03, 0x04]); // PK\x03\x04
 	const text = new TextDecoder().decode(bytes);
 	for (const part of ['[Content_Types].xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml']) assert.ok(text.includes(part), part);
+});
+
+test('export file names carry the source and a timestamp', () => {
+	const at = new Date(2026, 9, 16, 22, 5, 3);
+	assert.equal(exportFileName('customers', at), 'customers_2026-10-16_22-05-03');
+	assert.equal(exportFileName('public.Ödemeler / 2026', at), 'public.Ödemeler_2026_2026-10-16_22-05-03');
+	assert.equal(exportFileName('  ', at), 'export_2026-10-16_22-05-03');
 });

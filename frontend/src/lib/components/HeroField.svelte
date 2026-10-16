@@ -6,11 +6,14 @@
 	import { binaryField } from '#lib/binaryfield.ts';
 	import { prefs } from '#lib/prefs.svelte.ts';
 
+	/** Background color; the brand color when empty. */
+	let { color = '' }: { color?: string } = $props();
+
 	let canvas: HTMLCanvasElement;
 
 	onMount(() => {
 		const css = getComputedStyle(canvas);
-		const brand = css.getPropertyValue('--brand').trim() || '#0a3d62';
+		const brand = color || css.getPropertyValue('--brand').trim() || '#0a3d62';
 		const mono = css.getPropertyValue('--font-mono') || 'monospace';
 		// Pointer position (0..1 across the width), eased.
 		let px = 0.5;

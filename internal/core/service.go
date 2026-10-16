@@ -191,6 +191,7 @@ func (s *Service) open(cfg driver.Config) (*session, error) {
 		}
 		dial.Host, dial.Port = "127.0.0.1", sess.tun.Port
 	}
+	sess.dial = dial
 	if st, ok := driver.GetStore(cfg.Driver); ok {
 		ctx, cancel := s.withTimeout(15 * time.Second)
 		defer cancel()
@@ -206,6 +207,7 @@ func (s *Service) open(cfg driver.Config) (*session, error) {
 		return nil, err
 	}
 	sess.feat = driver.FeaturesOf(sess.drv)
+	_, sess.feat.Security = sess.drv.(driver.Securer)
 	if sess.db, err = sess.drv.Open(dial); err != nil {
 		sess.close()
 		return nil, err
@@ -276,6 +278,7 @@ func (s *Service) info(sess *session) (SessionInfo, error) {
 		info.Database = currentDatabase(ctx, sess)
 	}
 	info.Version = serverVersion(ctx, sess)
+	sess.current = info.Database
 	return info, nil
 }
 

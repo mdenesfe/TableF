@@ -3,6 +3,19 @@
 export type ExportKind = 'markdown' | 'json' | 'csv' | 'xlsx';
 export type Grid = { columns: string[]; rows: unknown[][] };
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** A file name for an export: what was exported plus when, e.g. "customers_2026-10-16_22-55-03". */
+export function exportFileName(base: string, at = new Date()): string {
+	const safe =
+		base
+			.trim()
+			.replace(/[^\p{L}\p{N}._-]+/gu, '_')
+			.replace(/^_+|_+$/g, '') || 'export';
+	const stamp = `${at.getFullYear()}-${pad2(at.getMonth() + 1)}-${pad2(at.getDate())}_${pad2(at.getHours())}-${pad2(at.getMinutes())}-${pad2(at.getSeconds())}`;
+	return `${safe}_${stamp}`;
+}
+
 const text = (v: unknown) => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
 
 export function toJSON({ columns, rows }: Grid): string {

@@ -1,10 +1,13 @@
 <script lang="ts">
 	import Dialog from '#lib/components/Dialog.svelte';
+	import WindowControls from '#lib/components/WindowControls.svelte';
+	import Splash from '#lib/components/Splash.svelte';
+	import { arrive } from '#lib/motion.ts';
 	import { onMount } from 'svelte';
 	import { X } from '@lucide/svelte';
 	import { prefs } from '#lib/prefs.svelte.ts';
 	import Preferences from '#lib/components/Preferences.svelte';
-	import { setToken, webNeedsToken } from '#lib/api.ts';
+	import { setToken, webNeedsToken, hasWindowControls, isMacDesktop } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import Home from '#lib/components/Home.svelte';
 	import Workspace from '#lib/components/Workspace.svelte';
@@ -21,11 +24,37 @@
 		}
 	}
 
+	// In fullscreen the header draws its own traffic lights (FullscreenLights).
+	function watchFullscreen() {
+		const sync = async () => {
+			const full = (await window.runtime?.WindowIsFullscreen()) ?? false;
+			if (full) document.documentElement.dataset.fullscreen = '';
+			else delete document.documentElement.dataset.fullscreen;
+		};
+		sync();
+		addEventListener('resize', sync);
+	}
+
+	// Full-page start-up animation: until connections (and a saved session) are
+	// loaded, and at least long enough to be seen rather than flash.
+	let booting = $state(true);
+	const bootStarted = performance.now();
+	const finishBoot = () => setTimeout(() => (booting = false), Math.max(0, 900 - (performance.now() - bootStarted)));
+
 	onMount(async () => {
-		needToken = await webNeedsToken();
-		if (needToken) return (app.restoring = false);
-		await app.loadConnections();
-		await app.restore();
+		// Lets CSS size the header to the platform's window chrome.
+		if (isMacDesktop) {
+			document.documentElement.dataset.platform = 'mac';
+			watchFullscreen();
+		} else if (hasWindowControls) document.documentElement.dataset.platform = 'framed';
+		try {
+			needToken = await webNeedsToken();
+			if (needToken) return (app.restoring = false);
+			await app.loadConnections();
+			await app.restore();
+		} finally {
+			finishBoot();
+		}
 	});
 
 	function submitToken(e: Event) {
@@ -45,10 +74,13 @@
 	</form>
 {:else if app.restoring}
 	<div class="restoring" aria-busy="true"></div>
-{:else if app.session}
-	<Workspace />
 {:else}
-	<Home />
+	<!-- Each view arrives with a short settle-in, after the splash and when switching. -->
+	{#key !!app.session}
+		<div class="view" in:arrive={{ delay: booting ? 0 : 60 }}>
+			{#if app.session}<Workspace />{:else}<Home />{/if}
+		</div>
+	{/key}
 {/if}
 
 <!-- Save the session before the page goes away; saves are otherwise debounced. -->
@@ -56,6 +88,14 @@
 <svelte:document onvisibilitychange={() => document.hidden && app.flushPersist()} />
 
 <Dialog />
+
+{#if booting}
+	<Splash instant message={app.connecting ? `reopening ${app.connecting.name}` : 'starting'} />
+{:else if app.connecting}
+	<Splash message={`connecting to ${app.connecting.name}`} color={app.connecting.color} />
+{/if}
+
+{#if hasWindowControls}<WindowControls onBrand={!app.session} />{/if}
 
 {#if app.prefsOpen}<Preferences onclose={() => (app.prefsOpen = false)} />{/if}
 
@@ -67,7 +107,8 @@
 {/if}
 
 <style>
-	.restoring {
+	.restoring,
+	.view {
 		height: 100%;
 	}
 	.token {
