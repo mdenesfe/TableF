@@ -3,6 +3,11 @@
 A free and open-source database client for macOS, Windows, Linux and the browser.
 One fast, keyboard-first interface for SQL and NoSQL databases.
 
+TableF is a free alternative to **TablePlus** and **SQL Server Management
+Studio (SSMS)**: the clean, native-feeling grid and editor of TablePlus, plus an
+SSMS-style Object Explorer, index details and table statistics. It works with
+22 databases, on every platform, and the code is open.
+
 ![A table in TableF: the data grid, the object explorer and the table details dashboard](docs/screenshots/table.png)
 
 ## Databases
