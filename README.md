@@ -3,6 +3,8 @@
 A free and open-source database client for macOS, Windows, Linux and the browser.
 One fast, keyboard-first interface for SQL and NoSQL databases.
 
+![A table in TableF: the data grid, the object explorer and the table details dashboard](docs/screenshots/table.png)
+
 ## Databases
 
 | SQL | Cloud & distributed | NoSQL & search |
@@ -28,8 +30,27 @@ with `known_hosts` verification).
   results for single-table queries.
 - Filters in the database's own language, server-side grouping, pinned and
   hidden columns, foreign-key navigation and a record detail pane.
+- Table details at a glance: row count, size on disk, storage breakdown,
+  row health and index usage, column roles and types.
+- Structure and Indexes views, with sizes and scan counts where the engine
+  reports them (unused indexes are flagged).
+- SSMS-style Object Explorer: every database with its tables, views,
+  procedures, functions, users, roles and schemas.
+- Saved queries per connection, a right-click menu for tables and routines
+  (select top N, count, copy scripts, clone, truncate, drop).
 - Export to Markdown, JSON, CSV and Excel.
 - Tabs and split panes, connection tags and colors, import from a connection URL.
+
+## Screenshots
+
+All screenshots use a fictional store database; none of the data is real.
+
+| | |
+| --- | --- |
+| ![Saved connections with tags](docs/screenshots/home.png) | ![Editing a record in the side pane](docs/screenshots/record.png) |
+| **Connections**: tags, colors and SSH at a glance. | **Records**: typed editors for every column. |
+| ![Indexes of a table with one index opened](docs/screenshots/indexes.png) | ![A saved query and its results](docs/screenshots/query.png) |
+| **Indexes**: columns, type, size, scans and definition. | **Queries**: saved per connection, editable results. |
 
 ## Getting started
 
