@@ -1,6 +1,7 @@
 <script lang="ts" module>
 	const WIDTH_KEY = 'tablef.sidebar.width';
 	const COLLAPSED_KEY = 'tablef.sidebar.sections';
+	const VIEW_KEY = 'tablef.sidebar.view';
 </script>
 
 <script lang="ts">
@@ -14,6 +15,7 @@
 	import { panel } from '#lib/motion.ts';
 	import DbLogo from './DbLogo.svelte';
 	import HeaderDots from './HeaderDots.svelte';
+	import ObjectExplorer from './ObjectExplorer.svelte';
 	import { prefs } from '#lib/prefs.svelte.ts';
 	import { engine } from '#lib/engines.ts';
 	import type { Routine, SavedQuery, Table } from '#lib/types.ts';
@@ -24,6 +26,12 @@
 	let width = $state(Math.min(480, Math.max(200, load(WIDTH_KEY, 248))));
 	let collapsed = $state<Record<string, boolean>>(load(COLLAPSED_KEY, {}));
 	let search = $state('');
+	// Explorer: SSMS-style tree of every database. Schema: the flat list of the current schema.
+	let view = $state<'explorer' | 'schema'>(load<string>(VIEW_KEY, 'explorer') === 'schema' ? 'schema' : 'explorer');
+	function setView(v: 'explorer' | 'schema') {
+		view = v;
+		save(VIEW_KEY, v);
+	}
 
 	const q = $derived(search.trim().toLowerCase());
 
@@ -127,6 +135,12 @@
 		{#if !search}<kbd>{modLabel}P</kbd>{/if}
 	</div>
 
+	<div class="views" role="tablist" aria-label="Sidebar view">
+		{#each [['explorer', 'Explorer'], ['schema', 'Schema']] as const as [v, label] (v)}
+			<button role="tab" aria-selected={view === v} class:on={view === v} onclick={() => setView(v)}>{label}</button>
+		{/each}
+	</div>
+
 	<nav class="tree">
 		{#if queries.length || !q}
 			{@render section('queries', 'Saved queries', queries.length)}
@@ -149,33 +163,13 @@
 			{/if}
 		{/if}
 
-		{@render section('tables', 'Tables', tables.length)}
-		{#if isOpen('tables')}
-			{#each tables.slice(0, limitOf('tables')) as t, i (t.name)}
-				<button
-					class="item"
-					style:--i={i}
-					class:active={tableActive(t)}
-					onclick={() => app.openTable(t)}
-					oncontextmenu={(e) => openMenu(e, { table: t })}
-					title={t.name}
-				>
-					<span class="icon-box"><Table2 /></span>
-					<span>{t.name}</span>
-					{#if pins.has(t)}<Pin size={11} class="pinned" aria-label="Pinned" />{/if}
-				</button>
-			{:else}
-				<p class="empty">{app.tablesLoading ? 'Loading…' : q ? 'No matches' : 'No tables'}</p>
-			{/each}
-			{#if tables.length > limitOf('tables')}
-				<button class="more" onclick={() => more('tables')}>Show more ({(tables.length - limitOf('tables')).toLocaleString()} left)</button>
-			{/if}
-		{/if}
-
-		{#if views.length || !q}
-			{@render section('views', 'Views', views.length)}
-			{#if isOpen('views')}
-				{#each views.slice(0, limitOf('views')) as t, i (t.name)}
+		{#if view === 'explorer'}
+			{#if queries.length || !q}<div class="section-gap"></div>{/if}
+			<ObjectExplorer query={q} onmenu={openMenu} />
+		{:else}
+			{@render section('tables', 'Tables', tables.length)}
+			{#if isOpen('tables')}
+				{#each tables.slice(0, limitOf('tables')) as t, i (t.name)}
 					<button
 						class="item"
 						style:--i={i}
@@ -184,41 +178,66 @@
 						oncontextmenu={(e) => openMenu(e, { table: t })}
 						title={t.name}
 					>
-						<span class="icon-box"><Eye /></span>
+						<span class="icon-box"><Table2 /></span>
 						<span>{t.name}</span>
 						{#if pins.has(t)}<Pin size={11} class="pinned" aria-label="Pinned" />{/if}
 					</button>
 				{:else}
-					<p class="empty">No views</p>
+					<p class="empty">{app.tablesLoading ? 'Loading…' : q ? 'No matches' : 'No tables'}</p>
 				{/each}
-				{#if views.length > limitOf('views')}
-					<button class="more" onclick={() => more('views')}>Show more ({(views.length - limitOf('views')).toLocaleString()} left)</button>
+				{#if tables.length > limitOf('tables')}
+					<button class="more" onclick={() => more('tables')}>Show more ({(tables.length - limitOf('tables')).toLocaleString()} left)</button>
 				{/if}
 			{/if}
-		{/if}
 
-		{#if app.session?.features?.routines && (routines.length || !q)}
-			{@render section('functions', 'Functions', routines.length)}
-			{#if isOpen('functions')}
-				{#each routines.slice(0, limitOf('functions')) as r, i (r.id)}
-					<button
-						class="item"
-						style:--i={i}
-						class:active={routineActive(r)}
-						onclick={() => app.openRoutine(r)}
-						oncontextmenu={(e) => openMenu(e, { routine: r })}
-						title={`${r.name}(${r.arguments})${r.returnType ? ` → ${r.returnType}` : ''}`}
-					>
-						<span class="icon-box"
-							>{#if r.kind === 'procedure'}<Workflow />{:else}<SquareFunction />{/if}</span
+			{#if views.length || !q}
+				{@render section('views', 'Views', views.length)}
+				{#if isOpen('views')}
+					{#each views.slice(0, limitOf('views')) as t, i (t.name)}
+						<button
+							class="item"
+							style:--i={i}
+							class:active={tableActive(t)}
+							onclick={() => app.openTable(t)}
+							oncontextmenu={(e) => openMenu(e, { table: t })}
+							title={t.name}
 						>
-						<span>{r.name}</span>
-					</button>
-				{:else}
-					<p class="empty">No functions</p>
-				{/each}
-				{#if routines.length > limitOf('functions')}
-					<button class="more" onclick={() => more('functions')}>Show more ({(routines.length - limitOf('functions')).toLocaleString()} left)</button>
+							<span class="icon-box"><Eye /></span>
+							<span>{t.name}</span>
+							{#if pins.has(t)}<Pin size={11} class="pinned" aria-label="Pinned" />{/if}
+						</button>
+					{:else}
+						<p class="empty">No views</p>
+					{/each}
+					{#if views.length > limitOf('views')}
+						<button class="more" onclick={() => more('views')}>Show more ({(views.length - limitOf('views')).toLocaleString()} left)</button>
+					{/if}
+				{/if}
+			{/if}
+
+			{#if app.session?.features?.routines && (routines.length || !q)}
+				{@render section('functions', 'Functions', routines.length)}
+				{#if isOpen('functions')}
+					{#each routines.slice(0, limitOf('functions')) as r, i (r.id)}
+						<button
+							class="item"
+							style:--i={i}
+							class:active={routineActive(r)}
+							onclick={() => app.openRoutine(r)}
+							oncontextmenu={(e) => openMenu(e, { routine: r })}
+							title={`${r.name}(${r.arguments})${r.returnType ? ` → ${r.returnType}` : ''}`}
+						>
+							<span class="icon-box"
+								>{#if r.kind === 'procedure'}<Workflow />{:else}<SquareFunction />{/if}</span
+							>
+							<span>{r.name}</span>
+						</button>
+					{:else}
+						<p class="empty">No functions</p>
+					{/each}
+					{#if routines.length > limitOf('functions')}
+						<button class="more" onclick={() => more('functions')}>Show more ({(routines.length - limitOf('functions')).toLocaleString()} left)</button>
+					{/if}
 				{/if}
 			{/if}
 		{/if}
@@ -285,6 +304,42 @@
 	.search kbd {
 		height: 1.1rem;
 		font-size: 10px;
+	}
+	.views {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 2px;
+		height: 1.65rem;
+		margin: 0 0.6rem 0.35rem;
+		padding: 2px;
+		border-radius: var(--radius);
+		background: color-mix(in oklch, var(--sidebar-accent) 80%, transparent);
+	}
+	.views button {
+		border: none;
+		border-radius: calc(var(--radius) - 2px);
+		background: transparent;
+		color: var(--muted-foreground);
+		font-size: 11.5px;
+		font-weight: 500;
+		transition:
+			background-color var(--dur-fast) ease-out,
+			color var(--dur-fast) ease-out;
+	}
+	.views button:hover {
+		color: var(--foreground);
+	}
+	.views button.on {
+		background: var(--background);
+		color: var(--foreground);
+		box-shadow: 0 0 0 1px var(--border);
+	}
+	.views button:focus-visible {
+		outline: none;
+		box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--brand) 60%, transparent);
+	}
+	.section-gap {
+		height: 0.45rem;
 	}
 	.tree {
 		flex: 1;
