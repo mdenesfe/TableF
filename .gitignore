@@ -1,0 +1,15 @@
+# Go / Wails build output
+/build/bin/
+/internal/ui/dist/
+
+# Frontend
+node_modules/
+/frontend/.svelte-kit/
+/frontend/.wails/
+
+# Local tooling
+/.claude/launch.json
+.DS_Store
+
+# Wails build stamp
+/frontend/package.json.md5
