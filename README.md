@@ -52,6 +52,23 @@ All screenshots use a fictional store database; none of the data is real.
 | ![Indexes of a table with one index opened](docs/screenshots/indexes.png) | ![A saved query and its results](docs/screenshots/query.png) |
 | **Indexes**: columns, type, size, scans and definition. | **Queries**: saved per connection, editable results. |
 
+## Download
+
+| Platform | Download |
+| --- | --- |
+| macOS 13+ (Apple silicon & Intel) | [TableF-macos-universal.zip](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-macos-universal.zip) |
+| Windows 10/11 (x64) | [TableF-windows-amd64.zip](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-windows-amd64.zip) |
+
+All versions and release notes are on the [releases page](https://github.com/mdenesfe/TableF/releases).
+The apps are not code-signed yet:
+
+- **macOS:** unzip, move TableF to Applications, then right-click it and
+  choose **Open** the first time.
+- **Windows:** unzip and run `TableF.exe`. If SmartScreen appears, choose
+  **More info → Run anyway**.
+
+Linux users can build from source (below) or run the web version.
+
 ## Getting started
 
 ### Desktop app
