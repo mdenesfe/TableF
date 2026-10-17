@@ -169,7 +169,8 @@ class AppState {
 	}
 
 	/** The connection being opened, for the full-page connecting animation. */
-	connecting = $state<ConnectionConfig | null>(null);
+	// Raw: compared by identity below, and a deep proxy would never equal c.
+	connecting = $state.raw<ConnectionConfig | null>(null);
 
 	async connect(c: ConnectionConfig, openQuery = true) {
 		this.busy = true;
@@ -186,9 +187,9 @@ class AppState {
 			this.fail(e);
 		} finally {
 			this.busy = false;
-			// Keep the animation up long enough to read, so fast connects don't flicker.
-			const wait = Math.max(0, 650 - (performance.now() - started));
-			setTimeout(() => this.connecting === c && (this.connecting = null), wait);
+			// Keep the animation up just long enough not to flicker on fast connects.
+			const wait = Math.max(0, 350 - (performance.now() - started));
+			setTimeout(() => this.connecting?.id === c.id && (this.connecting = null), wait);
 		}
 	}
 

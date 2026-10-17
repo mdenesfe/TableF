@@ -26,8 +26,8 @@
 	let width = $state(Math.min(480, Math.max(200, load(WIDTH_KEY, 248))));
 	let collapsed = $state<Record<string, boolean>>(load(COLLAPSED_KEY, {}));
 	let search = $state('');
-	// Explorer: SSMS-style tree of every database. Schema: the flat list of the current schema.
-	let view = $state<'explorer' | 'schema'>(load<string>(VIEW_KEY, 'explorer') === 'schema' ? 'schema' : 'explorer');
+	// Schema (default): the flat list of the current schema. Explorer: SSMS-style tree of every database.
+	let view = $state<'explorer' | 'schema'>(load<string>(VIEW_KEY, 'schema') === 'explorer' ? 'explorer' : 'schema');
 	function setView(v: 'explorer' | 'schema') {
 		view = v;
 		save(VIEW_KEY, v);
@@ -136,7 +136,7 @@
 	</div>
 
 	<div class="views" role="tablist" aria-label="Sidebar view">
-		{#each [['explorer', 'Explorer'], ['schema', 'Schema']] as const as [v, label] (v)}
+		{#each [['schema', 'Schema'], ['explorer', 'Explorer']] as const as [v, label] (v)}
 			<button role="tab" aria-selected={view === v} class:on={view === v} onclick={() => setView(v)}>{label}</button>
 		{/each}
 	</div>

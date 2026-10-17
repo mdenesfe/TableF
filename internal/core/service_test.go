@@ -1,6 +1,8 @@
 package core
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -259,5 +261,96 @@ func TestIndexes(t *testing.T) {
 	}
 	if pk != 1 || uq != 1 || len(list) != 3 {
 		t.Fatalf("indexes: %+v", list)
+	}
+}
+
+func TestQueryCursor(t *testing.T) {
+	svc, id := newSQLite(t)
+	const n = 12345
+	q := fmt.Sprintf(`WITH RECURSIVE s(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM s WHERE x < %d) SELECT x FROM s`, n)
+	res, err := svc.ExecuteQuery(id, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := res[0]
+	if r.Error != "" || len(r.Rows) != MaxQueryRows || r.Cursor == "" || !r.Truncated {
+		t.Fatalf("first chunk: %d rows, cursor %q, err %q", len(r.Rows), r.Cursor, r.Error)
+	}
+	got := len(r.Rows)
+	last := r.Rows[len(r.Rows)-1][0]
+	for {
+		page, err := svc.FetchRows(id, r.Cursor, 3000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Rows) > 0 && fmt.Sprint(page.Rows[0][0]) != fmt.Sprint(toInt(last)+1) {
+			t.Fatalf("gap: after %v came %v", last, page.Rows[0][0])
+		}
+		got += len(page.Rows)
+		if len(page.Rows) > 0 {
+			last = page.Rows[len(page.Rows)-1][0]
+		}
+		if page.Done {
+			break
+		}
+	}
+	if got != n {
+		t.Fatalf("read %d rows, want %d", got, n)
+	}
+	if _, err := svc.FetchRows(id, r.Cursor, 10); err == nil {
+		t.Fatal("a finished cursor should be gone")
+	}
+	// The connection went back to the pool: another query runs.
+	if res, err := svc.ExecuteQuery(id, "SELECT 1"); err != nil || res[0].Error != "" {
+		t.Fatalf("after cursor: %v %+v", err, res)
+	}
+
+	// Closing early releases it too.
+	res, _ = svc.ExecuteQuery(id, q)
+	if err := svc.CloseCursor(id, res[0].Cursor); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := svc.ExecuteQuery(id, "SELECT 2"); err != nil || res[0].Error != "" {
+		t.Fatalf("after close: %v %+v", err, res)
+	}
+}
+
+func toInt(v any) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case float64:
+		return int64(x)
+	}
+	return -1
+}
+
+// A cursor outlives the call that opened it (the web server binds each call
+// to its HTTP request).
+func TestQueryCursorOutlivesRequest(t *testing.T) {
+	svc, id := newSQLite(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	res, err := WithContext(svc, ctx).ExecuteQuery(id, `WITH RECURSIVE s(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM s WHERE x < 7000) SELECT x FROM s`)
+	cancel() // the request is over
+	if err != nil || res[0].Cursor == "" {
+		t.Fatalf("%v %+v", err, res[0].Error)
+	}
+	page, err := svc.FetchRows(id, res[0].Cursor, 5000)
+	if err != nil || len(page.Rows) != 2000 || !page.Done {
+		t.Fatalf("rest: %d rows, done %v, err %v", len(page.Rows), page.Done, err)
+	}
+}
+
+func TestRelations(t *testing.T) {
+	svc, id := newSQLite(t)
+	if _, err := svc.ExecuteQuery(id, `CREATE TABLE p (id INTEGER PRIMARY KEY); CREATE TABLE c (id INTEGER PRIMARY KEY, p_id INTEGER REFERENCES p(id));`); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := svc.GetRelations(id, "", "c")
+	if err != nil || len(rel.ForeignKeys) != 1 || rel.ForeignKeys[0].Column != "p_id" || rel.ForeignKeys[0].RefTable != "p" {
+		t.Fatalf("c: %+v %v", rel, err)
+	}
+	if rel, _ := svc.GetRelations(id, "", "p"); len(rel.ReferencedBy) != 1 || rel.ReferencedBy[0].Table != "c" {
+		t.Fatalf("p: %+v", rel)
 	}
 }

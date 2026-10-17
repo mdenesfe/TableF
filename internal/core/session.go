@@ -39,6 +39,10 @@ type session struct {
 	// opened when the Object Explorer expands them.
 	othersMu sync.Mutex
 	others   map[string]*sql.DB
+
+	// cursors are query results the UI is still reading (see FetchRows).
+	cursorsMu sync.Mutex
+	cursors   map[string]*cursor
 }
 
 type tableKey struct{ schema, table string }
@@ -92,6 +96,7 @@ func (s *session) close() {
 		cancel()
 	}
 	s.mu.Unlock()
+	s.closeCursors()
 	if s.store != nil {
 		s.store.Close()
 	}

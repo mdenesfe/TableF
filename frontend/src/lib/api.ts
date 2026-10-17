@@ -16,7 +16,9 @@ import type {
 	Principal,
 	InfoField,
 	SavedQuery,
-	Index
+	Index,
+	RowPage,
+	ForeignKey
 } from './types';
 
 type Bound = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -128,6 +130,10 @@ export const api = {
 	listSavedQueries: () => call<SavedQuery[]>('ListSavedQueries'),
 	saveQuery: (q: SavedQuery) => call<SavedQuery>('SaveQuery', q),
 	deleteSavedQuery: (id: string) => call<void>('DeleteSavedQuery', id),
+	getRelations: (id: string, schema: string, table: string) =>
+		call<{ foreignKeys: ForeignKey[]; referencedBy: ForeignKey[] }>('GetRelations', id, schema, table),
+	fetchRows: (id: string, cursor: string, limit: number) => call<RowPage>('FetchRows', id, cursor, limit),
+	closeCursor: (id: string, cursor: string) => call<void>('CloseCursor', id, cursor),
 	getIndexes: (id: string, schema: string, table: string) => call<Index[]>('GetIndexes', id, schema, table),
 	getTableInfo: (id: string, schema: string, table: string) => call<InfoField[]>('GetTableInfo', id, schema, table),
 	getRoutineDefinition: (id: string, r: Routine) => call<string>('GetRoutineDefinition', id, r),

@@ -281,8 +281,72 @@
 	}
 
 	function clickCell(r: number, c: number, e: MouseEvent) {
+		if (e.altKey && e.shiftKey) return; // a box selection (cellDown) handled it
+		box = null;
 		activate(r, c);
 		selectRow(r, e);
+		viewport?.focus();
+	}
+
+	// ---------- box selection, like VS Code's column selection ----------
+	// ⇧⌥-drag (or middle-drag) selects a rectangle of cells, ⇧⌥+arrows grow it
+	// from the active cell and ⌥-click on a header takes the whole column.
+	// Copy then takes just the box. Rows are display positions, columns are
+	// indexes into the visible columns.
+	let box = $state<{ r0: number; k0: number; r1: number; k1: number } | null>(null);
+	let boxDragging = false;
+	const boxBounds = $derived(
+		box
+			? {
+					r: [Math.min(box.r0, box.r1), Math.max(box.r0, box.r1)],
+					k: [Math.min(box.k0, box.k1), Math.max(box.k0, box.k1)]
+				}
+			: null
+	);
+	function inBox(r: number, k: number) {
+		if (!boxBounds) return false;
+		const p = posOf(r);
+		return p >= boxBounds.r[0] && p <= boxBounds.r[1] && k >= boxBounds.k[0] && k <= boxBounds.k[1];
+	}
+	// A new result starts without a box.
+	$effect(() => {
+		void rows;
+		box = null;
+	});
+
+	function cellDown(r: number, k: number, e: PointerEvent) {
+		if (!(e.button === 1 || (e.button === 0 && e.altKey && e.shiftKey))) return;
+		e.preventDefault(); // no autoscroll (middle button), no text selection
+		viewport?.focus();
+		const p = posOf(r);
+		box = { r0: p, k0: k, r1: p, k1: k };
+		activate(r, view.cols[k]);
+		boxDragging = true;
+		const up = () => {
+			boxDragging = false;
+			window.removeEventListener('pointerup', up);
+		};
+		window.addEventListener('pointerup', up);
+	}
+
+	function cellEnter(r: number, k: number) {
+		if (boxDragging && box) box = { ...box, r1: posOf(r), k1: k };
+	}
+
+	function growBox(dr: number, dk: number) {
+		if (!active || !rowTotal) return;
+		const k = view.cols.indexOf(active.c);
+		const b = box ?? { r0: posOf(active.r), k0: k, r1: posOf(active.r), k1: k };
+		const r1 = Math.max(0, Math.min(rowTotal - 1, b.r1 + dr));
+		const k1 = Math.max(0, Math.min(view.cols.length - 1, b.k1 + dk));
+		box = { ...b, r1, k1 };
+		scrollIntoView(rowAt(r1), view.cols[k1]);
+	}
+
+	function selectColumn(k: number) {
+		if (!rowTotal) return;
+		box = { r0: 0, k0: k, r1: rowTotal - 1, k1: k };
+		activate(rowAt(0), view.cols[k]);
 		viewport?.focus();
 	}
 
@@ -402,6 +466,7 @@
 	/** Moves the active cell; with extend the row selection grows from the anchor. */
 	function moveTo(nr: number | undefined, nc: number | undefined, extend = false) {
 		if (nr === undefined || nc === undefined) return;
+		box = null;
 		activate(nr, nc);
 		if (extend && anchorRow >= 0) selectRange(anchorRow, nr);
 		else {
@@ -424,6 +489,12 @@
 		const m = mod(e);
 		const firstCol = view.cols[0];
 		const lastCol = view.cols[view.cols.length - 1];
+		if (e.shiftKey && e.altKey && e.key.startsWith('Arrow')) {
+			e.preventDefault();
+			const step = m ? 1e9 : 1;
+			growBox(e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0, e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0);
+			return;
+		}
 		switch (e.key) {
 			case 'ArrowDown':
 				moveTo(m ? rowAt(rowTotal - 1) : stepRow(r, 1), c, e.shiftKey);
@@ -471,6 +542,10 @@
 					menu = null;
 					break;
 				}
+				if (box) {
+					box = null;
+					break;
+				}
 				if (selectedRows.size <= 1) return;
 				selectedRows = new Set([r]);
 				break;
@@ -507,6 +582,12 @@
 	const cellText = (v: Cell) => (v === null ? '' : String(v));
 
 	function selectionText(): string {
+		if (boxBounds) {
+			const cols = view.cols.slice(boxBounds.k[0], boxBounds.k[1] + 1);
+			const out: string[] = [];
+			for (let p = boxBounds.r[0]; p <= boxBounds.r[1]; p++) out.push(cols.map((ci) => cellText(rows[rowAt(p)][ci])).join('\t'));
+			return out.join('\n');
+		}
 		if (!active) return '';
 		if (selectedRows.size > 1)
 			return displayOrder()
@@ -652,13 +733,13 @@
 				class:pin-edge={k === view.pinnedCount - 1}
 				class:drop={dropTarget === col.name}
 				style:left={isPinned(k) ? `${pinLeft[k]}px` : undefined}
-				title={col.type ? `${col.name} · ${col.type}` : col.name}
+				title={`${col.type ? `${col.name} · ${col.type}` : col.name}\n⌥-click: select the column · ⇧⌥-drag: select a block`}
 				draggable="true"
 				ondragstart={(e) => dragStart(e, col.name)}
 				ondragover={(e) => dragOver(e, col.name)}
 				ondragleave={() => dropTarget === col.name && (dropTarget = '')}
 				ondrop={(e) => drop(e, col.name)}
-				onclick={() => !resizing && onsort?.(col.name)}
+				onclick={(e) => (e.altKey ? selectColumn(k) : !resizing && onsort?.(col.name))}
 			>
 				{#if col.primaryKey}<span class="icon-box" title="Primary key"><KeyRound /></span>{/if}
 				{#if relations[col.name]}<span class="icon-box" title={`→ ${relations[col.name]}`}><Link2 /></span>{/if}
@@ -737,6 +818,9 @@
 							class:changed={cellChanged(r, ci)}
 							class:rel={!!relations[columns[ci].name]}
 							class:active={active?.r === r && active?.c === ci}
+							class:boxed={inBox(r, k)}
+							onpointerdown={(e) => cellDown(r, k, e)}
+							onpointerenter={() => cellEnter(r, k)}
 							onclick={(e) => clickCell(r, ci, e)}
 							ondblclick={() => startEdit(r, ci)}
 							oncontextmenu={(e) => openMenu(e, r, ci)}
@@ -1051,6 +1135,10 @@
 	}
 	.cell.active {
 		box-shadow: inset 0 0 0 1px var(--brand-ink);
+	}
+	/* Box selection: a tinted block. */
+	.cell.boxed {
+		background: color-mix(in oklch, var(--brand-ink) 22%, transparent);
 	}
 	.cell-editor {
 		width: calc(100% + 0.8rem);

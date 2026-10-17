@@ -59,7 +59,7 @@
 	</label>
 {/snippet}
 
-<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && onclose()}>
+<div class="overlay" role="presentation">
 	<div class="dialog" role="dialog" aria-label="Preferences">
 		<nav class="side" aria-label="Sections">
 			<h2>Preferences</h2>

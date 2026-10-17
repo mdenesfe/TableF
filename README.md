@@ -67,8 +67,11 @@ All screenshots use a fictional store database; none of the data is real.
 All versions and release notes are on the [releases page](https://github.com/mdenesfe/TableF/releases).
 The apps are not code-signed yet:
 
-- **macOS:** unzip, move TableF to Applications, then right-click it and
-  choose **Open** the first time.
+- **macOS:** unzip and move TableF to Applications. The first time macOS says
+  it can't verify the app: click **Done**, open **System Settings → Privacy &
+  Security** and choose **Open Anyway** next to TableF. Or remove the download
+  quarantine in Terminal:
+  `xattr -dr com.apple.quarantine /Applications/TableF.app`
 - **Windows:** unzip and run `TableF.exe`. If SmartScreen appears, choose
   **More info → Run anyway**.
 
@@ -88,8 +91,7 @@ wails dev            # development mode with hot reload
 
 Release builds for macOS (universal) and Windows are produced by
 `.github/workflows/release.yml` when a `v*` tag is pushed. The apps are not
-code-signed yet: on macOS, right-click the app and choose **Open** the first
-time; on Windows, choose **More info → Run anyway** in SmartScreen.
+code-signed yet; see [Download](#download) for how to open them the first time.
 
 DuckDB embeds a C++ library and is only included in cgo builds. Cross-compiling
 for Windows from macOS without a mingw toolchain (`CGO_ENABLED=0`) leaves it

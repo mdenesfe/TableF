@@ -35,7 +35,7 @@
 <svelte:window onkeydowncapture={keydown} />
 
 {#if d}
-	<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && dialogs.close(null)}>
+	<div class="overlay" role="presentation">
 		<div class="dialog" role="dialog" aria-modal="true" aria-label={d.title}>
 			<header>
 				<span class="icon-box" class:danger={d.danger}>

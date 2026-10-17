@@ -23,31 +23,42 @@ func readRows(rows *sql.Rows, limit, skip int) (cols []string, out [][]any, trun
 	if cols, err = rows.Columns(); err != nil {
 		return nil, nil, false, err
 	}
-	out = [][]any{}
 	for skip > 0 && rows.Next() {
 		skip-- // discarded without Scan: nothing is copied or converted
 	}
-	// One scan buffer for the whole result; each kept row gets its own slice.
-	buf := make([]any, len(cols))
-	ptrs := make([]any, len(cols))
+	out, truncated, err = scanRows(rows, len(cols), limit, false)
+	return cols, out, truncated, err
+}
+
+// scanRows reads up to limit rows (0 = no limit). pending says rows is already
+// positioned on a row that hasn't been scanned. more reports whether another
+// row follows; rows is then left positioned on it (pending for the next call).
+func scanRows(rows *sql.Rows, ncols, limit int, pending bool) (out [][]any, more bool, err error) {
+	out = [][]any{}
+	// One scan buffer for the whole chunk; each kept row gets its own slice.
+	buf := make([]any, ncols)
+	ptrs := make([]any, ncols)
 	for i := range buf {
 		ptrs[i] = &buf[i]
 	}
-	for rows.Next() {
-		if limit > 0 && len(out) >= limit {
-			truncated = true
-			break
+	for limit <= 0 || len(out) < limit {
+		if !pending && !rows.Next() {
+			return out, false, rows.Err()
 		}
+		pending = false
 		if err := rows.Scan(ptrs...); err != nil {
-			return nil, nil, false, err
+			return nil, false, err
 		}
-		row := make([]any, len(cols))
+		row := make([]any, ncols)
 		for i, v := range buf {
 			row[i] = normalize(v)
 		}
 		out = append(out, row)
 	}
-	return cols, out, truncated, rows.Err()
+	if rows.Next() {
+		return out, true, nil
+	}
+	return out, false, rows.Err()
 }
 
 // columnTypes returns the database type name of each result column ("" when unknown).

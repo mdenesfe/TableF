@@ -222,7 +222,7 @@
 	</div>
 {/snippet}
 
-<div class="overlay" role="presentation" onclick={(ev) => ev.target === ev.currentTarget && onclose()}>
+<div class="overlay" role="presentation">
 	{#if step === 'pick'}
 		<div class="dialog picker-dialog" role="dialog" aria-label="Choose a database">
 			<header>

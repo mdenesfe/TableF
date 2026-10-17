@@ -150,3 +150,33 @@ func (s *Service) GetIndexes(id, schema, table string) ([]driver.Index, error) {
 	defer cancel()
 	return ix.Indexes(ctx, sess.db, schema, table)
 }
+
+// TableRelations are a table's foreign keys in both directions.
+type TableRelations struct {
+	ForeignKeys  []driver.ForeignKey `json:"foreignKeys"`
+	ReferencedBy []driver.ForeignKey `json:"referencedBy"`
+}
+
+// GetRelations returns a table's outgoing references and the references
+// pointing at it (cached with its columns), for query results that come
+// from one table.
+func (s *Service) GetRelations(id, schema, table string) (TableRelations, error) {
+	empty := TableRelations{ForeignKeys: []driver.ForeignKey{}, ReferencedBy: []driver.ForeignKey{}}
+	sess, err := s.get(id)
+	if err != nil {
+		return empty, err
+	}
+	if sess.store != nil || !sess.feat.ForeignKeys {
+		return empty, nil
+	}
+	if schema == "" {
+		schema = sess.drv.DefaultSchema(sess.cfg)
+	}
+	ctx, cancel := s.withTimeout(30 * time.Second)
+	defer cancel()
+	meta, err := sess.tableMeta(ctx, schema, table)
+	if err != nil {
+		return empty, err
+	}
+	return TableRelations{ForeignKeys: meta.out, ReferencedBy: meta.in}, nil
+}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { AlignLeft, Bookmark, CircleAlert, CircleCheck, CircleX, Columns3, Play, Square } from '@lucide/svelte';
+	import { AlignLeft, Bookmark, LoaderCircle, CircleAlert, CircleCheck, CircleX, Columns3, Play, Square } from '@lucide/svelte';
 	import { format } from 'sql-formatter';
 	import { dialogs } from '#lib/dialog.svelte.ts';
 	import type { Grid } from '#lib/export.ts';
@@ -11,11 +11,12 @@
 	import { firstTable, isDestructive, sourceTable, statementRanges } from '#lib/sql.ts';
 	import { compareCells, nextSort, type Sort } from '#lib/sort.ts';
 	import { app, type Tab } from '#lib/state.svelte.ts';
-	import type { Cell, QueryResult } from '#lib/types.ts';
-	import { untrack } from 'svelte';
+	import type { Cell, ForeignKey, QueryResult } from '#lib/types.ts';
+	import { onDestroy, untrack } from 'svelte';
 	import DataGrid, { emptyLayout, type GridLayout } from './DataGrid.svelte';
 	import FieldsPanel from './FieldsPanel.svelte';
 	import RecordPane from './RecordPane.svelte';
+	import RelationPeek from './RelationPeek.svelte';
 	import SqlEditor from './SqlEditor.svelte';
 
 	let { tab }: { tab: Extract<Tab, { kind: 'query' }> } = $props();
@@ -95,12 +96,37 @@
 	const resultName = $derived(source?.table ?? (result && firstTable(result.statement)) ?? tab.title.replace(/\.sql$/, ''));
 	const exportName = $derived(current === -1 ? 'messages' : resultName);
 
+	// Foreign keys of the table a result comes from: link icons in the header,
+	// related-row peek on click and relations in the record pane.
+	let rel = $state.raw<{ statement: string; out: ForeignKey[]; in: ForeignKey[] } | null>(null);
+	const relFor = $derived(rel && result && rel.statement === result.statement ? rel : null);
+	const relations = $derived(Object.fromEntries((relFor?.out ?? []).map((f) => [f.column, `${f.refTable}.${f.refColumn}`])));
+	let peek = $state<{ fk: ForeignKey; value: Cell; x: number; y: number } | null>(null);
+
+	async function loadRelations(r: QueryResult) {
+		const src = sourceTable(r.statement);
+		if (!src || !app.session?.features?.foreignKeys) return;
+		try {
+			const res = await api.getRelations(app.session.id, src.schema, src.table);
+			if (result?.statement !== r.statement) return;
+			const has = new Set(r.columns);
+			rel = {
+				statement: r.statement,
+				out: res.foreignKeys.filter((f) => has.has(f.column)),
+				in: res.referencedBy.filter((f) => has.has(f.refColumn))
+			};
+		} catch {
+			/* not a table (a view, a function): no relations */
+		}
+	}
+
 	async function detectSource(r: QueryResult | undefined) {
 		edits = new Map();
 		removed = new Set();
 		// A committed result is a new object for the same statement: keep its source.
 		if (r && source?.statement === r.statement) return;
 		source = null;
+		if (r && !r.error && r.columns.length && rel?.statement !== r.statement) loadRelations(r);
 		if (!r || r.error || !r.columns.length || !app.session?.features?.edit) return;
 		const src = sourceTable(r.statement);
 		if (!src) return;
@@ -241,9 +267,11 @@
 			)
 				return;
 		}
+		stopLoading();
 		running = true;
 		try {
 			results = await app.track(api.executeQuery(app.session.id, sql));
+			loadRest();
 			detailRow = null;
 			sort = { column: '', dir: '' };
 			layout = emptyLayout();
@@ -273,6 +301,48 @@
 		if (app.session) api.cancelQuery(app.session.id);
 	}
 
+	// ---------- the rest of a large result ----------
+	// The server sends the first rows at once and keeps the result open; the
+	// rest arrives here in chunks that grow as it goes.
+	let loading = $state<{ cursor: string; stopped: boolean } | null>(null);
+
+	async function loadRest() {
+		const sid = app.session?.id;
+		const cursor = results.find((x) => x.cursor)?.cursor;
+		if (!sid || !cursor) return;
+		const state = { cursor, stopped: false };
+		loading = state;
+		let size = 10_000;
+		try {
+			for (;;) {
+				const page = await api.fetchRows(sid, cursor, size);
+				if (state.stopped) break;
+				// Found by cursor, not by object: committed edits replace the result object.
+				results = results.map((x) =>
+					x.cursor === cursor ? { ...x, rows: x.rows.concat(page.rows), truncated: !page.done, cursor: page.done ? undefined : cursor } : x
+				);
+				if (page.done) break;
+				size = Math.min(50_000, size * 2);
+			}
+		} catch (e) {
+			if (!state.stopped) app.fail(e);
+		} finally {
+			if (loading === state) loading = null;
+		}
+	}
+
+	/** Stops reading the rest of the result; what arrived so far stays. */
+	function stopLoading() {
+		const l = loading;
+		if (!l) return;
+		l.stopped = true;
+		loading = null;
+		if (app.session) api.closeCursor(app.session.id, l.cursor).catch(() => {});
+		results = results.map((x) => (x.cursor === l.cursor ? { ...x, cursor: undefined, truncated: true } : x));
+	}
+
+	onDestroy(stopLoading);
+
 	function dragStart(e: PointerEvent) {
 		const rect = container.getBoundingClientRect();
 		drag(e, (ev) => (split = Math.min(85, Math.max(15, ((ev.clientY - rect.top) / rect.height) * 100))));
@@ -288,6 +358,10 @@
 		return sql.replace(/\s+/g, ' ').trim();
 	}
 </script>
+
+{#if peek}
+	<RelationPeek fk={peek.fk} value={peek.value} x={peek.x} y={peek.y} onclose={() => (peek = null)} />
+{/if}
 
 <svelte:window onkeydown={keydown} />
 
@@ -397,6 +471,11 @@
 								bind:layout
 								onactivate={(r) => (detailRow = r)}
 								onerror={(m) => app.fail(m)}
+								{relations}
+								onpeek={(r, c, rect) => {
+									const fk = relFor?.out.find((f) => f.column === result!.columns[c]);
+									if (fk) peek = { fk, value: shownRows[r][c], x: rect.left, y: rect.bottom + 4 };
+								}}
 							/>
 						</div>
 						{#if detailRow !== null && sortedRows[detailRow]}
@@ -405,6 +484,8 @@
 								row={shownRows[detailRow]}
 								title={`row ${detailRow + 1}`}
 								table={resultName}
+								foreignKeys={relFor?.out ?? []}
+								referencedBy={relFor?.in ?? []}
 								{editable}
 								changed={(c) => !!edits.get(sortedRows[detailRow!]) && result!.columns[c] in edits.get(sortedRows[detailRow!])!}
 								onedit={(c, v) => onedit(detailRow!, c, v)}
@@ -421,10 +502,16 @@
 			</div>
 			{#if result?.columns.length}
 				<div class="foot">
-					{#key result}
-						<span class="tf-text"><b>{result.rows.length.toLocaleString()}</b> rows{result.truncated ? ' (limited)' : ''}</span>
+					{#key result.statement + result.durationMs}
+						<span class="tf-text"
+							><b>{result.rows.length.toLocaleString()}</b> rows{#if !result.cursor && result.truncated}<span class="muted"> (stopped)</span>{/if}</span
+						>
 						<span class="muted tf-text">{result.durationMs.toFixed(1)} ms</span>
 					{/key}
+					{#if result.cursor && loading}
+						<span class="loading-rest"><LoaderCircle size={12} class="spin" /> loading more…</span>
+						<button class="stop-link" onclick={stopLoading}>Stop</button>
+					{/if}
 					{#if source}<span class="muted editable">editable · {source.schema ? `${source.schema}.` : ''}{source.table}</span>{/if}
 				</div>
 			{/if}
@@ -551,6 +638,32 @@
 	}
 	.bar-left .fields {
 		margin-right: 0.25rem;
+	}
+	.loading-rest {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		color: var(--muted-foreground);
+	}
+	.loading-rest :global(.spin) {
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	.stop-link {
+		padding: 0 0.35rem;
+		border: 1px solid var(--border);
+		border-radius: 0.25rem;
+		background: transparent;
+		color: var(--foreground);
+		font-size: 11px;
+		line-height: 1.2rem;
+	}
+	.stop-link:hover {
+		background: var(--accent);
 	}
 	.ctl:disabled {
 		opacity: 0.4;

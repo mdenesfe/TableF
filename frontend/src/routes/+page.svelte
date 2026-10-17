@@ -39,7 +39,7 @@
 	// loaded, and at least long enough to be seen rather than flash.
 	let booting = $state(true);
 	const bootStarted = performance.now();
-	const finishBoot = () => setTimeout(() => (booting = false), Math.max(0, 900 - (performance.now() - bootStarted)));
+	const finishBoot = () => setTimeout(() => (booting = false), Math.max(0, 600 - (performance.now() - bootStarted)));
 
 	onMount(async () => {
 		// Lets CSS size the header to the platform's window chrome.

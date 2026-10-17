@@ -94,7 +94,15 @@ export interface QueryResult {
 	rowsAffected: number;
 	durationMs: number;
 	truncated: boolean;
+	/** Set while more rows wait on the server; read them with api.fetchRows. */
+	cursor?: string;
 	error?: string;
+}
+
+/** One chunk of a query result read through its cursor. */
+export interface RowPage {
+	rows: Cell[][];
+	done: boolean;
 }
 
 export interface TableDataRequest {

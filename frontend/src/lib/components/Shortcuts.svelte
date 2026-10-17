@@ -58,6 +58,10 @@
 				[['Click', S], 'Select range'],
 				[['Click', M], 'Toggle row'],
 				[['Drag #'], 'Select rows'],
+				[[S, A, 'Drag'], 'Select a block of cells'],
+				[['Middle-drag'], 'Select a block of cells'],
+				[[S, A, '↑↓←→'], 'Grow the block'],
+				[[A, 'Click header'], 'Select the column'],
 				[['Dbl-click edge'], 'Fit column']
 			]
 		},
@@ -84,7 +88,7 @@
 
 <svelte:window onkeydown={keydown} />
 
-<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && onclose()}>
+<div class="overlay" role="presentation">
 	<div class="dialog" role="dialog" aria-label="Keyboard shortcuts">
 		<header>
 			<h2>Keyboard shortcuts</h2>

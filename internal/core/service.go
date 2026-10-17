@@ -444,7 +444,9 @@ type QueryResult struct {
 	RowsAffected int64    `json:"rowsAffected"`
 	DurationMs   float64  `json:"durationMs"`
 	Truncated    bool     `json:"truncated"`
-	Error        string   `json:"error,omitempty"`
+	// Cursor is set when more rows follow; FetchRows reads them.
+	Cursor string `json:"cursor,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // TableDataRequest describes a page of table data.
@@ -673,7 +675,13 @@ func (s *Service) ExecuteQuery(id, script string) ([]QueryResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
+	// The connection stays open when the last result is left as a cursor.
+	keepConn := false
+	defer func() {
+		if !keepConn {
+			conn.Close()
+		}
+	}()
 
 	// Statements that may be DDL invalidate cached columns and keys once the
 	// script is done (even when it failed half-way).
@@ -681,10 +689,18 @@ func (s *Service) ExecuteQuery(id, script string) ([]QueryResult, error) {
 		defer sess.invalidateMeta()
 	}
 	results := make([]QueryResult, 0, len(stmts))
-	for _, stmt := range stmts {
+	for i, stmt := range stmts {
 		res := QueryResult{Statement: stmt, Columns: []string{}, ColumnTypes: []string{}, Rows: [][]any{}}
 		start := time.Now()
-		if returnsRows(stmt) {
+		if returnsRows(stmt) && i == len(stmts)-1 {
+			// The last result can stay open: its first rows come back now and
+			// the UI reads the rest in chunks (FetchRows).
+			var cur string
+			res.Columns, res.ColumnTypes, res.Rows, cur, err = s.queryWithCursor(sess, conn, stmt)
+			if cur != "" {
+				res.Cursor, res.Truncated, keepConn = cur, true, true
+			}
+		} else if returnsRows(stmt) {
 			rows, qerr := conn.QueryContext(ctx, stmt)
 			if qerr == nil {
 				res.ColumnTypes = columnTypes(rows)

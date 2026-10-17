@@ -21,7 +21,7 @@ export function panel(node: HTMLElement, { side = 'left', duration = 240 }: { si
 }
 
 /** The loading screen dissolves: a soft fade while it drifts slightly larger. */
-export function dissolve(_node: HTMLElement, { duration = 460 }: { duration?: number } = {}) {
+export function dissolve(_node: HTMLElement, { duration = 280 }: { duration?: number } = {}) {
 	return {
 		duration: still() ? 0 : duration,
 		easing: ease,
