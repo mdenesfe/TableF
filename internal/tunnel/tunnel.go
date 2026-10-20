@@ -201,6 +201,17 @@ func pipe(dst, src net.Conn) {
 	_, _ = io.Copy(dst, src)
 }
 
+// Closed reports whether the tunnel has shut down (Close was called or the
+// keepalive found the SSH server gone).
+func (t *Tunnel) Closed() bool {
+	select {
+	case <-t.done:
+		return true
+	default:
+		return false
+	}
+}
+
 // Close stops listening and closes the SSH connection.
 func (t *Tunnel) Close() {
 	t.once.Do(func() {

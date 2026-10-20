@@ -27,8 +27,14 @@ const MaxQueryRows = 5000
 // state is shared by a Service and every view of it made by WithContext.
 type state struct {
 	store    *Store
-	mu       sync.Mutex // guards sessions; never held while closing one
+	mu       sync.Mutex // guards sessions and disconnected; never held while closing one
 	sessions map[string]*session
+	// disconnected are connections the user closed: they are not reopened
+	// on their own (see get).
+	disconnected map[string]bool
+	// healMu serializes reopening broken sessions, so concurrent calls on a
+	// dead session reconnect once.
+	healMu sync.Mutex
 }
 
 // Service is the API surface of TableF.
@@ -41,7 +47,7 @@ type Service struct {
 
 // NewService returns a Service that keeps saved connections in store.
 func NewService(store *Store) *Service {
-	return &Service{state: &state{store: store, sessions: map[string]*session{}}}
+	return &Service{state: &state{store: store, sessions: map[string]*session{}, disconnected: map[string]bool{}}}
 }
 
 // WithContext returns a view of s whose calls stop when ctx is done, such as
@@ -239,6 +245,7 @@ func (s *Service) connect(cfg driver.Config) (SessionInfo, error) {
 	s.mu.Lock()
 	old := s.sessions[cfg.ID]
 	s.sessions[cfg.ID] = sess
+	delete(s.disconnected, cfg.ID)
 	s.mu.Unlock()
 	if old != nil {
 		old.close()
@@ -307,6 +314,7 @@ func (s *Service) Disconnect(id string) {
 	s.mu.Lock()
 	sess, ok := s.sessions[id]
 	delete(s.sessions, id)
+	s.disconnected[id] = true
 	s.mu.Unlock()
 	if ok {
 		sess.close()
@@ -324,14 +332,69 @@ func (s *Service) UseDatabase(id, database string) (SessionInfo, error) {
 	return s.connect(cfg)
 }
 
-func (s *Service) get(id string) (*session, error) {
+// lookup returns a session as it is, without checking or reopening it (for
+// calls that must not replace it, such as reading an open cursor).
+func (s *Service) lookup(id string) (*session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[id]
 	if !ok {
-		return nil, errors.New("not connected")
+		return nil, errNotConnected
 	}
 	return sess, nil
+}
+
+var errNotConnected = errors.New("not connected")
+
+// get returns a working session. A session whose SSH tunnel has dropped, or
+// that sat idle and no longer answers a ping (a laptop that slept, a server
+// or firewall that cut idle connections), is reopened in place with the same
+// ID and database. A saved connection with no session (the app or server
+// restarted under an open UI) is opened again, unless the user disconnected it.
+func (s *Service) get(id string) (*session, error) {
+	s.mu.Lock()
+	sess, ok := s.sessions[id]
+	closedByUser := s.disconnected[id]
+	s.mu.Unlock()
+	if ok && sess.healthy(s.context()) {
+		return sess, nil
+	}
+	if !ok && closedByUser {
+		return nil, errNotConnected
+	}
+	return s.reopen(id, sess)
+}
+
+// reopen replaces a broken (or missing) session with a fresh one.
+func (s *Service) reopen(id string, broken *session) (*session, error) {
+	s.healMu.Lock()
+	defer s.healMu.Unlock()
+	// Another call may have reopened it while this one waited.
+	s.mu.Lock()
+	cur, ok := s.sessions[id]
+	s.mu.Unlock()
+	if ok && cur != broken {
+		return cur, nil
+	}
+	var cfg driver.Config
+	if broken != nil {
+		cfg = broken.cfg // keeps the database the user switched to
+	} else {
+		stored, err := s.store.Get(id)
+		if err != nil {
+			return nil, errNotConnected
+		}
+		cfg = stored
+	}
+	if _, err := s.connect(cfg); err != nil {
+		return nil, fmt.Errorf("connection lost and reconnecting failed: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if sess, ok := s.sessions[id]; ok {
+		return sess, nil
+	}
+	return nil, errNotConnected
 }
 
 // ---------- schema ----------
@@ -653,6 +716,24 @@ func (s *Service) ExecuteQuery(id, script string) ([]QueryResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
+	results, err := s.executeQuery(sess, script)
+	if err != errNothingToExecute {
+		if err != nil {
+			results = []QueryResult{{Statement: script, Error: err.Error()}}
+		}
+		s.recordRun(sess, script, started, results)
+		if err != nil {
+			results = nil
+		}
+	}
+	return results, err
+}
+
+var errNothingToExecute = errors.New("nothing to execute")
+
+func (s *Service) executeQuery(sess *session, script string) ([]QueryResult, error) {
+	var err error
 	var stmts []string
 	if sess.store != nil {
 		stmts = sess.store.Split(script)
@@ -660,7 +741,7 @@ func (s *Service) ExecuteQuery(id, script string) ([]QueryResult, error) {
 		stmts = SplitStatements(script, sess.feat.Family)
 	}
 	if len(stmts) == 0 {
-		return nil, errors.New("nothing to execute")
+		return nil, errNothingToExecute
 	}
 
 	ctx, done := sess.startRun(s.context())
@@ -727,7 +808,7 @@ func (s *Service) ExecuteQuery(id, script string) ([]QueryResult, error) {
 
 // CancelQuery aborts every running ExecuteQuery of a session.
 func (s *Service) CancelQuery(id string) error {
-	sess, err := s.get(id)
+	sess, err := s.lookup(id)
 	if err != nil {
 		return err
 	}

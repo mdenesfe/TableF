@@ -94,7 +94,7 @@ func (s *session) closeCursors() {
 // FetchRows reads the next chunk of a query result that ExecuteQuery left
 // open (QueryResult.Cursor). The cursor closes itself after the last row.
 func (s *Service) FetchRows(id, cursorID string, limit int) (RowPage, error) {
-	sess, err := s.get(id)
+	sess, err := s.lookup(id)
 	if err != nil {
 		return RowPage{}, err
 	}
@@ -126,7 +126,7 @@ func (s *Service) FetchRows(id, cursorID string, limit int) (RowPage, error) {
 // CloseCursor drops the rest of a query result (the user stopped loading it
 // or ran another query).
 func (s *Service) CloseCursor(id, cursorID string) error {
-	sess, err := s.get(id)
+	sess, err := s.lookup(id)
 	if err != nil {
 		return err
 	}

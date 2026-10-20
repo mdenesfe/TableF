@@ -18,7 +18,8 @@ import type {
 	SavedQuery,
 	Index,
 	RowPage,
-	ForeignKey
+	ForeignKey,
+	HistoryEntry
 } from './types';
 
 type Bound = Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -132,6 +133,8 @@ export const api = {
 	deleteSavedQuery: (id: string) => call<void>('DeleteSavedQuery', id),
 	getRelations: (id: string, schema: string, table: string) =>
 		call<{ foreignKeys: ForeignKey[]; referencedBy: ForeignKey[] }>('GetRelations', id, schema, table),
+	listHistory: (connectionId: string, query: string, limit: number) => call<HistoryEntry[]>('ListHistory', connectionId, query, limit),
+	clearHistory: (connectionId: string) => call<void>('ClearHistory', connectionId),
 	fetchRows: (id: string, cursor: string, limit: number) => call<RowPage>('FetchRows', id, cursor, limit),
 	closeCursor: (id: string, cursor: string) => call<void>('CloseCursor', id, cursor),
 	getIndexes: (id: string, schema: string, table: string) => call<Index[]>('GetIndexes', id, schema, table),

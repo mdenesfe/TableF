@@ -99,6 +99,21 @@ export interface QueryResult {
 	error?: string;
 }
 
+/** One script run, as kept in the query history. */
+export interface HistoryEntry {
+	id: string;
+	connectionId: string;
+	database: string;
+	sql: string;
+	/** RFC 3339 start time. */
+	at: string;
+	durationMs: number;
+	/** Rows of the last result (partial: more followed) or rows affected. */
+	rows: number;
+	partial?: boolean;
+	error?: string;
+}
+
 /** One chunk of a query result read through its cursor. */
 export interface RowPage {
 	rows: Cell[][];

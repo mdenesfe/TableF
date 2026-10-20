@@ -21,6 +21,10 @@ var errNotFound = errors.New("connection not found")
 type Store struct {
 	mu   sync.Mutex
 	path string
+
+	// histMu guards history.jsonl; histLines estimates its entries (see AddHistory).
+	histMu    sync.Mutex
+	histLines int
 }
 
 // DefaultStorePath returns <user config dir>/TableF/connections.json.
@@ -63,15 +67,21 @@ func (s *Store) save(list []driver.Config) error {
 	return writeJSON(s.path, list)
 }
 
-// writeJSON replaces a file atomically: the value is written to a temporary
-// file that is synced to disk before it is renamed over the old one, so a
-// crash leaves either the old or the new content, never a truncated one.
+// writeJSON writes v as indented JSON with writeFileAtomic.
 func writeJSON(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
+		return err
+	}
+	return writeFileAtomic(path, b)
+}
+
+// writeFileAtomic replaces a file atomically: the data is written to a
+// temporary file that is synced to disk before it is renamed over the old
+// one, so a crash leaves either the old or the new content, never a
+// truncated one. The file is private to the user (0600).
+func writeFileAtomic(path string, b []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"

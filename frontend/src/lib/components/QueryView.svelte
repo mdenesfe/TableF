@@ -294,6 +294,7 @@
 			app.fail(e);
 		} finally {
 			running = false;
+			app.historyVersion++;
 		}
 	}
 

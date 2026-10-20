@@ -23,6 +23,7 @@
 				[['Drag tab'], 'Reorder, move or split'],
 				[[M, 'B'], 'Toggle sidebar'],
 				[[M, 'P'], 'Search tables'],
+				[[S, M, 'H'], 'Query history'],
 				[[M, '/'], 'Keyboard shortcuts'],
 				[[M, ','], 'Preferences']
 			]

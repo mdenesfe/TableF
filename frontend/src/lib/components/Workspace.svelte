@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Database, Eye, Keyboard, LogOut, PanelLeft, Plus, Settings, SquareFunction, SquareTerminal, Table2, X } from '@lucide/svelte';
+	import { Database, Eye, History, Keyboard, LogOut, PanelLeft, Plus, Settings, SquareFunction, SquareTerminal, Table2, X } from '@lucide/svelte';
 	import { tick, untrack } from 'svelte';
 	import { modLabel, tabModLabel, targetIn, isMacDesktop } from '#lib/api.ts';
 	import Picker from './Picker.svelte';
@@ -7,6 +7,7 @@
 	import { app, MAX_PANES, routineTitle } from '#lib/state.svelte.ts';
 	import { drag } from '#lib/drag.ts';
 	import QueryView from './QueryView.svelte';
+	import HistoryView from './HistoryView.svelte';
 	import Shortcuts from './Shortcuts.svelte';
 	import HeaderDots from './HeaderDots.svelte';
 	import FullscreenLights from './FullscreenLights.svelte';
@@ -183,6 +184,9 @@
 		} else if (key === 'w' && app.activeTabId) {
 			e.preventDefault();
 			app.closeTab(app.activeTabId);
+		} else if (key === 'h' && e.shiftKey) {
+			e.preventDefault();
+			app.openHistory();
 		} else if (key === 'b') {
 			e.preventDefault();
 			sidebarOpen = !sidebarOpen;
@@ -265,6 +269,7 @@
 		<div class="spacer"></div>
 
 		<div class="actions no-drag">
+			<button class="icon" onclick={() => app.openHistory()} title="Query history ({modLabel}⇧H)"><History size={15} /></button>
 			<button class="icon" onclick={() => (helpOpen = true)} title="Keyboard shortcuts ({modLabel}/)"><Keyboard size={15} /></button>
 			<button class="icon" onclick={() => (app.prefsOpen = true)} title="Preferences ({modLabel},)"><Settings size={15} /></button>
 			<button class="icon" onclick={() => app.disconnect()} title="Disconnect"><LogOut size={14} /></button>
@@ -321,7 +326,7 @@
 									>
 										<span class="icon-box sm"
 											>{#if t.kind === 'query' && routineTitles.has(t.title)}<SquareFunction />{:else if t.kind === 'query'}<SquareTerminal
-												/>{:else if t.table.type === 'view'}<Eye />{:else}<Table2 />{/if}</span
+												/>{:else if t.kind === 'history'}<History />{:else if t.table.type === 'view'}<Eye />{:else}<Table2 />{/if}</span
 										>
 										<span>{t.title}</span>
 										{#if t.kind === 'table' && t.filter}<span class="tab-filter">filtered</span>{/if}
@@ -352,6 +357,8 @@
 					>
 						{#if t.kind === 'table'}
 							<TableView table={t.table} initialFilter={t.filter ?? ''} initialView={t.view} active={t.id === app.activeTabId} />
+						{:else if t.kind === 'history'}
+							<HistoryView active={t.id === app.activeTabId} />
 						{:else}
 							<QueryView tab={t} />
 						{/if}

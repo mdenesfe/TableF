@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mdenesfe/TableF/internal/driver"
@@ -40,6 +41,10 @@ type session struct {
 	othersMu sync.Mutex
 	others   map[string]*sql.DB
 
+	// lastUsed is when the session last served a call (UnixNano); a session
+	// idle for longer than idleCheck is pinged before use.
+	lastUsed atomic.Int64
+
 	// cursors are query results the UI is still reading (see FetchRows).
 	cursorsMu sync.Mutex
 	cursors   map[string]*cursor
@@ -52,6 +57,41 @@ type tableMeta struct {
 	cols    []driver.Column
 	out, in []driver.ForeignKey
 	at      time.Time
+}
+
+// idleCheck is how long a session may sit unused before it is pinged before
+// the next call; pings are skipped while it is busy.
+const idleCheck = time.Minute
+
+// healthy reports whether the session can serve a call: its SSH tunnel is up
+// and, after idleCheck without use, the server still answers a ping.
+func (s *session) healthy(parent context.Context) bool {
+	if s.tun != nil && s.tun.Closed() {
+		return false
+	}
+	now := time.Now().UnixNano()
+	last := s.lastUsed.Swap(now)
+	if last != 0 && time.Duration(now-last) < idleCheck {
+		return true
+	}
+	if s.db == nil || s.busy() {
+		// Store engines reconnect on their own; a busy session (a running
+		// query, an open cursor holding SQLite's only connection) is alive.
+		return true
+	}
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+	return s.db.PingContext(ctx) == nil
+}
+
+// busy reports whether a query is running or a result is still being read.
+func (s *session) busy() bool {
+	s.mu.Lock()
+	running := len(s.running)
+	s.mu.Unlock()
+	s.cursorsMu.Lock()
+	defer s.cursorsMu.Unlock()
+	return running > 0 || len(s.cursors) > 0
 }
 
 // startRun registers a cancelable query run; done must be called when it ends.

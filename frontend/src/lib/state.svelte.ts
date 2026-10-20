@@ -30,7 +30,8 @@ export type Tab =
 			autorun?: boolean;
 			/** The saved query this tab edits; saving updates it in place. */
 			savedId?: string;
-	  };
+	  }
+	| { id: string; kind: 'history'; title: string; group: number };
 
 /** How many panes a layout may hold. */
 export const MAX_PANES = 8;
@@ -40,7 +41,11 @@ interface SavedSession {
 	connectionId: string;
 	database: string;
 	schema: string;
-	tabs: ({ kind: 'table'; table: Table; filter?: string; group?: number } | { kind: 'query'; title: string; sql: string; group?: number; savedId?: string })[];
+	tabs: (
+		| { kind: 'table'; table: Table; filter?: string; group?: number }
+		| { kind: 'query'; title: string; sql: string; group?: number; savedId?: string }
+		| { kind: 'history'; group?: number }
+	)[];
 	active: number;
 	layout?: LayoutNode;
 }
@@ -224,7 +229,9 @@ class AppState {
 			tabs: this.tabs.map((t) =>
 				t.kind === 'table'
 					? { kind: 'table', table: t.table, filter: t.filter, group: t.group }
-					: { kind: 'query', title: t.title, sql: t.sql, group: t.group, savedId: t.savedId }
+					: t.kind === 'history'
+						? { kind: 'history', group: t.group }
+						: { kind: 'query', title: t.title, sql: t.sql, group: t.group, savedId: t.savedId }
 			),
 			active: Math.max(
 				0,
@@ -260,6 +267,7 @@ class AppState {
 			for (const t of saved.tabs) {
 				this.focusedGroup = groupsOf(this.layout).includes(t.group ?? 0) ? (t.group ?? 0) : groupsOf(this.layout)[0];
 				if (t.kind === 'query') this.openQuery(t.sql, t.title, t.savedId);
+				else if (t.kind === 'history') this.openHistory();
 				else {
 					const table = this.tables.find((x) => x.schema === t.table.schema && x.name === t.table.name);
 					if (table) this.openTable(table, t.filter ?? '');
@@ -292,7 +300,7 @@ class AppState {
 		this.busy = true;
 		try {
 			this.session = await this.track(api.useDatabase(this.session.id, name));
-			this.tabs = this.tabs.filter((t) => t.kind === 'query');
+			this.tabs = this.tabs.filter((t) => t.kind !== 'table');
 			for (const g of groupsOf(this.layout)) {
 				if (!this.tabs.some((t) => t.id === this.activeByGroup[g])) this.activeByGroup[g] = this.tabs.find((t) => t.group === g)?.id ?? '';
 			}
@@ -456,6 +464,21 @@ class AppState {
 		} catch (e) {
 			this.fail(e);
 		}
+	}
+
+	/** Bumped after every query run, so an open history view reloads. */
+	historyVersion = $state(0);
+
+	/** Opens the query history tab, or focuses it. */
+	openHistory() {
+		const existing = this.tabs.find((t) => t.kind === 'history');
+		if (existing) {
+			this.activeTabId = existing.id;
+			return;
+		}
+		const tab: Tab = { id: nextId(), kind: 'history', title: 'History', group: this.focusedGroup };
+		this.tabs.push(tab);
+		this.activeTabId = tab.id;
 	}
 
 	async openRoutine(r: Routine) {

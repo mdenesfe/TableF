@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mdenesfe/TableF/internal/driver"
 )
@@ -352,5 +353,92 @@ func TestRelations(t *testing.T) {
 	}
 	if rel, _ := svc.GetRelations(id, "", "p"); len(rel.ReferencedBy) != 1 || rel.ReferencedBy[0].Table != "c" {
 		t.Fatalf("p: %+v", rel)
+	}
+}
+
+// A session whose connection died while idle is reopened on the next call,
+// on the same database.
+func TestSessionHeals(t *testing.T) {
+	svc, id := newSQLite(t)
+	if _, err := svc.ExecuteQuery(id, `CREATE TABLE a (x INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	sess, _ := svc.lookup(id)
+	sess.db.Close()                                                // the connection is gone
+	sess.lastUsed.Store(time.Now().Add(-2 * idleCheck).UnixNano()) // and it sat idle
+	tables, err := svc.ListTables(id)
+	if err != nil || len(tables) != 1 {
+		t.Fatalf("after reconnect: %v %v", tables, err)
+	}
+	if now, _ := svc.lookup(id); now == sess {
+		t.Fatal("the broken session should have been replaced")
+	}
+}
+
+// After a restart the UI still holds a session ID: the saved connection is
+// opened again, but not one the user disconnected.
+func TestSessionReopensAfterRestart(t *testing.T) {
+	svc, id := newSQLite(t)
+	restarted := NewService(svc.store)
+	t.Cleanup(restarted.Shutdown)
+	if _, err := restarted.ListTables(id); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	restarted.Disconnect(id)
+	if _, err := restarted.ListTables(id); err == nil {
+		t.Fatal("a disconnected session must stay closed")
+	}
+	if _, err := restarted.Connect(id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := restarted.ListTables(id); err != nil {
+		t.Fatalf("after connect: %v", err)
+	}
+}
+
+func TestHistory(t *testing.T) {
+	svc, id := newSQLite(t)
+	for _, q := range []string{"CREATE TABLE h (x INTEGER)", "INSERT INTO h VALUES (1), (2)", "SELECT * FROM h", "SELECT nope FROM h"} {
+		if _, err := svc.ExecuteQuery(id, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := svc.ListHistory(id, "", 0)
+	if err != nil || len(list) != 4 {
+		t.Fatalf("list: %d %v", len(list), err)
+	}
+	if list[0].SQL != "SELECT nope FROM h" || list[0].Error == "" {
+		t.Fatalf("newest first, with its error: %+v", list[0])
+	}
+	if list[1].Rows != 2 || list[2].Rows != 2 || list[1].Error != "" {
+		t.Fatalf("rows: select %d, insert %d", list[1].Rows, list[2].Rows)
+	}
+	if found, _ := svc.ListHistory(id, "insert", 0); len(found) != 1 {
+		t.Fatalf("search: %+v", found)
+	}
+	if other, _ := svc.ListHistory("someone-else", "", 0); len(other) != 0 {
+		t.Fatalf("other connection: %+v", other)
+	}
+	if err := svc.ClearHistory(id); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := svc.ListHistory(id, "", 0); len(list) != 0 {
+		t.Fatalf("after clear: %d", len(list))
+	}
+}
+
+func TestHistoryCompacts(t *testing.T) {
+	st := NewStore(filepath.Join(t.TempDir(), "connections.json"))
+	for i := range historyCompactAt {
+		if err := st.AddHistory(HistoryEntry{ID: fmt.Sprint(i), SQL: fmt.Sprint("SELECT ", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all, err := st.loadHistory()
+	if err != nil || len(all) != historyKeep {
+		t.Fatalf("kept %d, want %d (%v)", len(all), historyKeep, err)
+	}
+	if all[len(all)-1].ID != fmt.Sprint(historyCompactAt-1) {
+		t.Fatalf("the newest entry must survive: %+v", all[len(all)-1])
 	}
 }
