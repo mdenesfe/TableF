@@ -9,6 +9,8 @@
 # Needs, on this Mac:
 #   - a "Developer ID Application" identity in the login keychain
 #   - notarytool credentials: xcrun notarytool store-credentials <profile>
+#   - python3 with Pillow, and permission for the terminal to control
+#     Finder (macOS asks once; see scripts/dmg/make-dmg.sh)
 #
 # Usage: scripts/release-mac.sh [--skip-build]
 # Env:   TABLEF_SIGN_IDENTITY (default: the first Developer ID Application identity)
@@ -51,14 +53,7 @@ rm -f "$ZIP"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
 echo "==> Building the installer"
-if [[ ! -x build/.dmg-venv/bin/dmgbuild ]]; then
-	python3 -m venv build/.dmg-venv
-	build/.dmg-venv/bin/pip install -q --disable-pip-version-check "dmgbuild==1.6.5"
-fi
-python3 scripts/dmg/background.py build/dmg
-tiffutil -cathidpicheck build/dmg/background.png build/dmg/background@2x.png -out build/dmg/background.tiff
-rm -f "$DMG"
-build/.dmg-venv/bin/dmgbuild -s scripts/dmg/settings.py -D app="$APP" -D background=build/dmg/background.tiff "TableF" "$DMG"
+scripts/dmg/make-dmg.sh "$APP" "$DMG"
 codesign --force --timestamp --sign "$IDENTITY" "$DMG"
 
 echo "==> Notarizing the installer"

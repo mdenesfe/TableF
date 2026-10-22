@@ -4,7 +4,7 @@ arrow from the app to Applications.
 
 Usage: python3 scripts/dmg/background.py <out_dir>
 Writes background.png (660x400) and background@2x.png (1320x800).
-Icon positions here must match scripts/dmg/settings.py.
+Icon positions here must match scripts/dmg/make-dmg.sh.
 """
 import math
 import os
@@ -14,7 +14,7 @@ import sys
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 660, 400  # window content size in points
-APP = (180, 215)  # icon centers in points (settings.py)
+APP = (180, 215)  # icon centers in points (make-dmg.sh)
 APPS = (480, 215)
 BRAND = (10, 61, 98)
 ICON = os.path.join(os.path.dirname(__file__), '..', '..', 'build', 'appicon.png')

@@ -15,5 +15,4 @@ node_modules/
 /frontend/package.json.md5
 
 # macOS installer (DMG) build
-/build/.dmg-venv/
 /build/dmg/
