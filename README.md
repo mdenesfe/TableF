@@ -61,12 +61,13 @@ All screenshots use a fictional store database; none of the data is real.
 
 | Platform | Download |
 | --- | --- |
-| macOS 13+ (Apple silicon & Intel) | [TableF-macos-universal.zip](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-macos-universal.zip) |
+| macOS 13+ (Apple silicon & Intel) | [TableF-macos-universal.dmg](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-macos-universal.dmg) (installer) · [.zip](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-macos-universal.zip) |
 | Windows 10/11 (x64) | [TableF-windows-amd64.zip](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-windows-amd64.zip) |
 
 All versions and release notes are on the [releases page](https://github.com/mdenesfe/TableF/releases).
-- **macOS:** unzip and move TableF to Applications. The app is signed with a
-  Developer ID and notarized by Apple, so it opens without warnings.
+- **macOS:** open the DMG and drag TableF to Applications. The app and the
+  installer are signed with a Developer ID and notarized by Apple, so they
+  open without warnings.
 - **Windows:** unzip and run `TableF.exe`. The Windows build isn't code-signed
   yet: if SmartScreen appears, choose **More info → Run anyway**.
 

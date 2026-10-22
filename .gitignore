@@ -13,3 +13,7 @@ node_modules/
 
 # Wails build stamp
 /frontend/package.json.md5
+
+# macOS installer (DMG) build
+/build/.dmg-venv/
+/build/dmg/
