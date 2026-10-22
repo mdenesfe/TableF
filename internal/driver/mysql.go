@@ -30,6 +30,11 @@ func mysqlConfig(cfg Config) *mysql.Config {
 	mc.ParseTime = true
 	mc.Loc = time.UTC
 	mc.MultiStatements = false
+	// A read-only MySQL connection is read-only on the server too (MySQL 5.7.20+;
+	// MariaDB and SingleStore name the setting differently and rely on the checks).
+	if cfg.ReadOnly() && cfg.Driver == "mysql" {
+		mc.Params = map[string]string{"transaction_read_only": "1"}
+	}
 	// Same meaning as libpq's sslmode: "require" encrypts without checking
 	// the certificate, the verify modes check it against the system roots.
 	switch cfg.SSLMode {

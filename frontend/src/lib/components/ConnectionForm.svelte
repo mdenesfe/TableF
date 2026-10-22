@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { Check, CircleAlert, FolderOpen, Link, LoaderCircle, Search, X } from '@lucide/svelte';
+	import { Check, CircleAlert, FolderOpen, Link, LoaderCircle, Lock, Search, ShieldAlert, ShieldOff, X } from '@lucide/svelte';
+	import { SAFE_MODES, modeOf } from '#lib/safemode.ts';
 	import { api, isDesktop } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import { formatURL, parseURL } from '#lib/connurl.ts';
@@ -160,6 +161,7 @@
 		form.name = autoName();
 		try {
 			const saved = await api.saveConnection($state.snapshot(form));
+			if (app.connection?.id === saved.id) app.connection = saved;
 			onclose(saved);
 			if (andConnect) await app.connect(saved);
 		} catch (err) {
@@ -329,6 +331,32 @@
 							{#each knownTags.slice(0, 8) as t (t)}<button type="button" class="tag mono ghost" onclick={() => addTag(t)}>+ {t}</button>{/each}
 						</div>
 					{/if}
+				</div>
+
+				<div class="field">
+					<span class="label">Safe mode</span>
+					<div class="modes" role="radiogroup" aria-label="Safe mode">
+						{#each SAFE_MODES as m (m.value)}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={modeOf(form.safeMode) === m.value}
+								class="mode"
+								class:on={modeOf(form.safeMode) === m.value}
+								class:strict={m.value === 'read-only'}
+								onclick={() => (form.safeMode = m.value)}
+							>
+								{#if m.value === 'silent'}<ShieldOff size={13} />{:else if m.value === 'read-only'}<Lock size={13} />{:else}<ShieldAlert size={13} />{/if}
+								{m.label}
+							</button>
+						{/each}
+					</div>
+					<p class="mode-hint">
+						{SAFE_MODES.find((m) => m.value === modeOf(form.safeMode))?.hint}
+						{#if modeOf(form.safeMode) === 'silent' && form.tags.some((t) => /prod/i.test(t))}
+							<span class="warn">Tagged production: consider Alert on changes or Read-only.</span>
+						{/if}
+					</p>
 				</div>
 
 				{#if e.kind === 'file'}
@@ -922,5 +950,49 @@
 		to {
 			transform: rotate(360deg);
 		}
+	}
+	.modes {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.3rem;
+	}
+	.mode {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.35rem;
+		height: 1.9rem;
+		padding: 0 0.4rem;
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		background: var(--card);
+		color: var(--muted-foreground);
+		font-size: 12px;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.mode:hover {
+		color: var(--foreground);
+	}
+	.mode.on {
+		border-color: var(--brand-ink);
+		background: var(--brand-soft);
+		color: var(--foreground);
+		font-weight: 500;
+	}
+	.mode.strict.on {
+		border-color: var(--warning);
+		background: color-mix(in oklch, var(--warning) 14%, transparent);
+	}
+	.mode-hint {
+		margin: 0.35rem 0 0;
+		font-size: 11.5px;
+		color: var(--muted-foreground);
+	}
+	.mode-hint .warn {
+		display: block;
+		margin-top: 0.15rem;
+		color: var(--warning);
 	}
 </style>

@@ -11,6 +11,12 @@ type Principal struct {
 	Kind string `json:"kind"` // user | role
 }
 
+// RoleSwitcher is implemented by engines whose sessions can act as another
+// role (PostgreSQL's SET ROLE, through Config.Options[RoleOption]).
+type RoleSwitcher interface {
+	Roles(ctx context.Context, db *sql.DB) ([]string, error)
+}
+
 // Securer is implemented by engines that can list their users and roles.
 type Securer interface {
 	Principals(ctx context.Context, db *sql.DB) ([]Principal, error)

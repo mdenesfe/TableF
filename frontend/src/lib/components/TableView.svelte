@@ -214,7 +214,7 @@
 		const pk = columns.filter((c) => c.primaryKey).map((c) => c.name);
 		return pk.length ? pk : columns.map((c) => c.name);
 	});
-	const editable = $derived(table.type === 'table' && columns.length > 0 && app.session?.features?.edit !== false);
+	const editable = $derived(table.type === 'table' && columns.length > 0 && app.session?.features?.edit !== false && !app.readOnly);
 	const canGroup = $derived(app.session?.features?.groups !== false);
 	// The filter line speaks the engine's own language.
 	const sqlFilter = $derived(isSQL(app.session?.driver ?? 'postgres'));
@@ -643,6 +643,15 @@
 
 	async function commit() {
 		if (!app.session || !dirty) return;
+		const where = `${table.schema ? `${table.schema}.` : ''}${table.name}`;
+		const n = (k: number) => `${k} row${k === 1 ? '' : 's'}`;
+		const updated = [...edits.keys()].filter((i) => !deleted.has(i) && i < base.length).length;
+		const plan = [
+			inserted.length && `INSERT INTO ${where}: ${n(inserted.length)}`,
+			updated && `UPDATE ${where}: ${n(updated)}`,
+			deleted.size && `DELETE FROM ${where}: ${n(deleted.size)}`
+		].filter((x): x is string => !!x);
+		if (!(await app.confirmSafe(plan, 'Commit'))) return;
 		const cs: ChangeSet = {
 			schema: table.schema,
 			table: table.name,

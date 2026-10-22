@@ -131,7 +131,36 @@ func (s *Service) SaveConnection(cfg driver.Config) (driver.Config, error) {
 		return redact(cfg), err
 	}
 	saved, err := s.store.Put(cfg)
-	return redact(saved), err
+	if err != nil {
+		return redact(saved), err
+	}
+	s.applySafeMode(saved)
+	return redact(saved), nil
+}
+
+// applySafeMode reopens an open session of a connection whose safe mode
+// changed, so the new mode (and a read-only server setting) takes effect
+// at once, on the database the session is in.
+func (s *Service) applySafeMode(cfg driver.Config) {
+	s.mu.Lock()
+	sess, ok := s.sessions[cfg.ID]
+	s.mu.Unlock()
+	if !ok || sess.cfg.SafeMode == cfg.SafeMode {
+		return
+	}
+	next := sess.cfg
+	next.SafeMode = cfg.SafeMode
+	if _, err := s.connect(next); err == nil {
+		return
+	}
+	// Never leave a session running under the old, looser mode: drop it and
+	// let the next call open the saved connection (see get).
+	s.mu.Lock()
+	if s.sessions[cfg.ID] == sess {
+		delete(s.sessions, cfg.ID)
+	}
+	s.mu.Unlock()
+	sess.close()
 }
 
 // DeleteConnection closes and forgets a saved connection.
@@ -184,6 +213,15 @@ type SessionInfo struct {
 	Version   string   `json:"version"`
 	// Features tells the UI what this engine can do and which dialect it speaks.
 	Features driver.Features `json:"features"`
+	// User is who the server says the session acts as; Login the login when
+	// it differs (a role switch). Superuser: superuser, sysadmin or admin.
+	User      string `json:"user"`
+	Login     string `json:"login,omitempty"`
+	Superuser bool   `json:"superuser"`
+	// Role is the role chosen with UseRole (PostgreSQL), empty for the
+	// login's own; CanSwitchRole says the engine supports it.
+	Role          string `json:"role,omitempty"`
+	CanSwitchRole bool   `json:"canSwitchRole"`
 }
 
 // open connects (through an SSH tunnel when configured) and pings the server.
@@ -285,6 +323,12 @@ func (s *Service) info(sess *session) (SessionInfo, error) {
 		info.Database = currentDatabase(ctx, sess)
 	}
 	info.Version = serverVersion(ctx, sess)
+	who := whoAmI(ctx, sess)
+	info.User, info.Login, info.Superuser = who.User, who.Login, who.Superuser
+	info.Role = sess.cfg.Options[driver.RoleOption]
+	if sess.drv != nil {
+		_, info.CanSwitchRole = sess.drv.(driver.RoleSwitcher)
+	}
 	sess.current = info.Database
 	return info, nil
 }
@@ -455,6 +499,9 @@ func (s *Service) CreateSchema(id, name string) error {
 	sess, err := s.get(id)
 	if err != nil {
 		return err
+	}
+	if sess.cfg.ReadOnly() {
+		return errReadOnly("CREATE SCHEMA " + name)
 	}
 	if !sess.feat.CreateSchema {
 		return errors.New("this database doesn't support creating schemas")
@@ -743,6 +790,9 @@ func (s *Service) executeQuery(sess *session, script string) ([]QueryResult, err
 	if len(stmts) == 0 {
 		return nil, errNothingToExecute
 	}
+	if err := checkReadOnly(sess, stmts); err != nil {
+		return nil, err
+	}
 
 	ctx, done := sess.startRun(s.context())
 	defer done()
@@ -843,6 +893,9 @@ func (s *Service) ApplyChanges(id string, cs ChangeSet) ([]string, error) {
 	}
 	if !sess.feat.Edit {
 		return nil, errors.New("editing isn't supported for this database")
+	}
+	if sess.cfg.ReadOnly() {
+		return nil, errReadOnlyEdit
 	}
 	ctx, cancel := s.withTimeout(60 * time.Second)
 	defer cancel()

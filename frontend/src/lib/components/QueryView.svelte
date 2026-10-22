@@ -90,7 +90,7 @@
 	const pendingCount = $derived(edits.size + removed.size);
 	const dirty = $derived(pendingCount > 0);
 	const DISCARD_KEYS = isMac ? '⇧⌘⌫' : 'Ctrl+Shift+⌫';
-	const editable = $derived(!!source && !!app.session?.features?.edit);
+	const editable = $derived(!!source && !!app.session?.features?.edit && !app.readOnly);
 
 	// Files are named after what they hold: the queried table, else the tab.
 	const resultName = $derived(source?.table ?? (result && firstTable(result.statement)) ?? tab.title.replace(/\.sql$/, ''));
@@ -183,6 +183,12 @@
 	async function commit() {
 		if (!app.session || !source || !result || !dirty) return;
 		const r = result;
+		const where = `${source.schema ? `${source.schema}.` : ''}${source.table}`;
+		const plan = [
+			edits.size && `UPDATE ${where}: ${edits.size} row${edits.size === 1 ? '' : 's'}`,
+			removed.size && `DELETE FROM ${where}: ${removed.size} row${removed.size === 1 ? '' : 's'}`
+		].filter((x): x is string => !!x);
+		if (!(await app.confirmSafe(plan, 'Commit'))) return;
 		try {
 			await app.track(
 				api.applyChanges(app.session.id, {
@@ -267,6 +273,7 @@
 			)
 				return;
 		}
+		if (!(await app.confirmSafe(statementRanges(sql).map((r) => sql.slice(r.from, r.to))))) return;
 		stopLoading();
 		running = true;
 		try {

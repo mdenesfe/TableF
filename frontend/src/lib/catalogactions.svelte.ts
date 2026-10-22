@@ -18,7 +18,7 @@ const family = () => app.session?.features?.family ?? '';
 export const canQuery = () => !!app.session && isSQL(app.session.driver);
 
 /** Whether this connection runs SQL and can change data (DDL items need both). */
-export const canModify = () => !!app.session && isSQL(app.session.driver) && app.session.features?.edit !== false;
+export const canModify = () => !!app.session && isSQL(app.session.driver) && app.session.features?.edit !== false && !app.readOnly;
 
 /** schema.table quoted for the current engine (unqualified where there are no schemas). */
 export function qualified(t: Pick<Table, 'schema' | 'name'>): string {

@@ -27,6 +27,9 @@ type Config struct {
 	Color    string `json:"color"`
 	// Tags group and filter saved connections, e.g. "local", "staging", "production".
 	Tags []string `json:"tags"`
+	// SafeMode guards the connection against accidental changes; see the
+	// SafeMode* constants. Empty means SafeModeSilent.
+	SafeMode string `json:"safeMode,omitempty"`
 	// Options holds engine-specific settings, e.g. accountId and apiToken for
 	// Cloudflare D1, projectId and credentials for BigQuery, region and keys for
 	// DynamoDB, warehouse and role for Snowflake, url and authToken for libSQL.
@@ -51,6 +54,19 @@ type Config struct {
 }
 
 // Opt returns an engine option, or def when it is empty.
+// Safe modes, like TablePlus's: the UI asks before running statements
+// (alert modes), and read-only refuses anything that could change data in
+// the backend itself.
+const (
+	SafeModeSilent       = "silent"
+	SafeModeAlertChanges = "alert-changes"
+	SafeModeAlertAll     = "alert-all"
+	SafeModeReadOnly     = "read-only"
+)
+
+// ReadOnly reports whether the connection refuses changes.
+func (c Config) ReadOnly() bool { return c.SafeMode == SafeModeReadOnly }
+
 func (c Config) Opt(key, def string) string {
 	if v := c.Options[key]; v != "" {
 		return v

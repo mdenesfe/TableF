@@ -3,7 +3,8 @@ import { familyOf } from '#lib/engines.ts';
 import { load, remove, save } from '#lib/storage.ts';
 import { dialogs } from '#lib/dialog.svelte.ts';
 import { collator } from '#lib/sort.ts';
-import { api } from './api';
+import { SAFE_MODES, modeOf, needsConfirm, type SafeMode } from '#lib/safemode.ts';
+import { api, modLabel } from './api';
 import { groupsOf, leaf, removeLeaf, splitLeaf, type LayoutNode, type Side } from './layout';
 import type { Cell, ConnectionConfig, Routine, SavedQuery, SessionInfo, Table } from './types';
 
@@ -464,6 +465,77 @@ class AppState {
 		} catch (e) {
 			this.fail(e);
 		}
+	}
+
+	// ---------- safe mode ----------
+	get safeMode(): SafeMode {
+		return modeOf(this.connection?.safeMode);
+	}
+	/** Read-only connections can't edit; the backend refuses writes too. */
+	get readOnly(): boolean {
+		return this.safeMode === 'read-only';
+	}
+
+	// ---------- who the session acts as ----------
+	/** Acts as another role (PostgreSQL); "" goes back to the login's own. */
+	async useRole(role: string) {
+		if (!this.session) return;
+		await this.switchIdentity(() => api.useRole(this.session!.id, role));
+	}
+
+	/** Reconnects as another user, for this session only (the saved connection is unchanged). */
+	async connectAs(user: string, password: string): Promise<boolean> {
+		if (!this.session) return false;
+		return this.switchIdentity(() => api.connectAs(this.session!.id, user, password));
+	}
+
+	private async switchIdentity(fn: () => Promise<SessionInfo>): Promise<boolean> {
+		this.busy = true;
+		try {
+			this.session = await this.track(fn());
+			await this.loadTables();
+			this.notify('info', `Now acting as ${this.session.user || 'the new user'}. Refresh open tables (${modLabel}R) to see their data as this user.`);
+			return true;
+		} catch (e) {
+			this.fail(e);
+			return false;
+		} finally {
+			this.busy = false;
+		}
+	}
+
+	/** Changes the open connection's safe mode; the backend reopens the session under it. */
+	async setSafeMode(mode: SafeMode) {
+		const c = this.connection;
+		if (!c || modeOf(c.safeMode) === mode) return;
+		try {
+			const saved = await this.track(api.saveConnection({ ...$state.snapshot(c), safeMode: mode }));
+			this.connection = saved;
+			this.connections = this.connections.map((x) => (x.id === saved.id ? saved : x));
+			this.notify('info', `${saved.name}: ${SAFE_MODES.find((m) => m.value === mode)?.label}`);
+		} catch (e) {
+			this.fail(e);
+		}
+	}
+
+	/**
+	 * Asks before running statements when the connection's safe mode wants it
+	 * (alert modes). Resolves true when it may go ahead.
+	 */
+	async confirmSafe(statements: string[], what = 'Run'): Promise<boolean> {
+		if (!needsConfirm(this.safeMode, statements)) return true;
+		const name = this.connection?.name ?? 'this connection';
+		const lines = statements.map((x) => x.trim().split('\n')[0]).filter(Boolean);
+		return dialogs.confirm({
+			title: `${what} on ${name}?`,
+			message:
+				this.safeMode === 'alert-all'
+					? `${name} asks before every query.`
+					: `${lines.length === 1 ? 'This statement changes' : 'These statements change'} data or schema on ${name}.`,
+			detail: lines.slice(0, 12).join('\n') + (lines.length > 12 ? `\n… and ${lines.length - 12} more` : ''),
+			confirmLabel: what,
+			danger: this.safeMode === 'alert-changes'
+		});
 	}
 
 	/** Bumped after every query run, so an open history view reloads. */

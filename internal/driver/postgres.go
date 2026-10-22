@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"net/url"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
+
+// RoleOption names the role a PostgreSQL session switches to (SET ROLE) on
+// every connection it opens; empty means the login's own role.
+const RoleOption = "role"
 
 type postgres struct{}
 
@@ -33,9 +38,48 @@ func (postgres) Open(cfg Config) (*sql.DB, error) {
 		User:     url.UserPassword(cfg.User, cfg.Password),
 		Host:     fmt.Sprintf("%s:%d", cfg.Host, port),
 		Path:     "/" + dbname,
-		RawQuery: url.Values{"sslmode": {ssl}, "application_name": {"TableF"}}.Encode(),
+		RawQuery: pgParams(cfg, ssl).Encode(),
 	}
-	return sql.Open("pgx", u.String())
+	role := cfg.Options[RoleOption]
+	if role == "" {
+		return sql.Open("pgx", u.String())
+	}
+	// SET ROLE on each new connection, so every pooled connection (and every
+	// reconnect) acts as the chosen role.
+	pc, err := pgx.ParseConfig(u.String())
+	if err != nil {
+		return nil, err
+	}
+	setRole := "SET ROLE " + pgx.Identifier{role}.Sanitize()
+	return stdlib.OpenDB(*pc, stdlib.OptionAfterConnect(func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, setRole)
+		return err
+	})), nil
+}
+
+// Roles lists the roles the login may switch to with SET ROLE: its own and
+// those it is a member of (built-in pg_* roles left out).
+func (postgres) Roles(ctx context.Context, db *sql.DB) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT rolname FROM pg_roles
+		WHERE pg_has_role(session_user, oid, 'MEMBER') AND rolname NOT LIKE 'pg\_%'
+		ORDER BY rolname = session_user DESC, rolname`)
+	if err != nil {
+		return nil, err
+	}
+	return ScanStrings(rows)
+}
+
+// pgParams are the connection parameters. A read-only connection also asks
+// the server to refuse writes (default_transaction_read_only), which catches
+// what statement checks can't, such as a function that writes called from a
+// SELECT. Redshift doesn't know the setting, so it relies on the checks.
+func pgParams(cfg Config, ssl string) url.Values {
+	v := url.Values{"sslmode": {ssl}, "application_name": {"TableF"}}
+	if cfg.ReadOnly() && cfg.Driver != "redshift" {
+		v.Set("default_transaction_read_only", "on")
+	}
+	return v
 }
 
 func (postgres) Databases(ctx context.Context, db *sql.DB) ([]string, error) {

@@ -172,3 +172,15 @@ func TestMySQLTLS(t *testing.T) {
 		}
 	}
 }
+
+func TestReadOnlyPostgresParams(t *testing.T) {
+	if pgParams(Config{Driver: "postgres"}, "prefer").Has("default_transaction_read_only") {
+		t.Error("a normal connection must not be read-only")
+	}
+	if pgParams(Config{Driver: "postgres", SafeMode: SafeModeReadOnly}, "prefer").Get("default_transaction_read_only") != "on" {
+		t.Error("a read-only connection should ask the server for it")
+	}
+	if pgParams(Config{Driver: "redshift", SafeMode: SafeModeReadOnly}, "prefer").Has("default_transaction_read_only") {
+		t.Error("Redshift doesn't know the setting")
+	}
+}

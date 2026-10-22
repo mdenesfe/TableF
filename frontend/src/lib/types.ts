@@ -24,6 +24,8 @@ export interface ConnectionConfig {
 	sshPassphrase: string;
 	/** Free-form labels, e.g. local, staging, production. */
 	tags: string[];
+	/** How careful to be before running statements (see safemode.ts). */
+	safeMode?: 'silent' | 'alert-changes' | 'alert-all' | 'read-only';
 	/** Engine-specific settings (see Engine.fields in engines.ts). */
 	options: Record<string, string>;
 	/**
@@ -45,6 +47,14 @@ export interface SessionInfo {
 	databases: string[];
 	version: string;
 	features: Features;
+	/** Who the server says the session acts as, and the login when it differs. */
+	user: string;
+	login?: string;
+	/** Superuser, sysadmin or account admin. */
+	superuser: boolean;
+	/** The role chosen with useRole (PostgreSQL), empty for the login's own. */
+	role?: string;
+	canSwitchRole: boolean;
 }
 
 /** What the connected engine supports; mirrors driver.Features in Go. */

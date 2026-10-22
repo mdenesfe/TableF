@@ -8,6 +8,8 @@
 	import { drag } from '#lib/drag.ts';
 	import QueryView from './QueryView.svelte';
 	import HistoryView from './HistoryView.svelte';
+	import SafeModeBadge from './SafeModeBadge.svelte';
+	import UserMenu from './UserMenu.svelte';
 	import Shortcuts from './Shortcuts.svelte';
 	import HeaderDots from './HeaderDots.svelte';
 	import FullscreenLights from './FullscreenLights.svelte';
@@ -252,7 +254,7 @@
 					<span class="sep">/</span>
 					<Picker value={app.schema} items={schemaItems} placeholder="Find schema…" onselect={(s) => (app.schema = s)}>
 						{#snippet footer(close)}
-							{#if app.session?.features?.createSchema}
+							{#if app.session?.features?.createSchema && !app.readOnly}
 								<button
 									onclick={() => {
 										close();
@@ -269,6 +271,8 @@
 		<div class="spacer"></div>
 
 		<div class="actions no-drag">
+			<UserMenu />
+			<SafeModeBadge />
 			<button class="icon" onclick={() => app.openHistory()} title="Query history ({modLabel}⇧H)"><History size={15} /></button>
 			<button class="icon" onclick={() => (helpOpen = true)} title="Keyboard shortcuts ({modLabel}/)"><Keyboard size={15} /></button>
 			<button class="icon" onclick={() => (app.prefsOpen = true)} title="Preferences ({modLabel},)"><Settings size={15} /></button>

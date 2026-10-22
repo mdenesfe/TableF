@@ -133,6 +133,9 @@ export const api = {
 	deleteSavedQuery: (id: string) => call<void>('DeleteSavedQuery', id),
 	getRelations: (id: string, schema: string, table: string) =>
 		call<{ foreignKeys: ForeignKey[]; referencedBy: ForeignKey[] }>('GetRelations', id, schema, table),
+	listRoles: (id: string) => call<string[]>('ListRoles', id),
+	useRole: (id: string, role: string) => call<SessionInfo>('UseRole', id, role),
+	connectAs: (id: string, user: string, password: string) => call<SessionInfo>('ConnectAs', id, user, password),
 	listHistory: (connectionId: string, query: string, limit: number) => call<HistoryEntry[]>('ListHistory', connectionId, query, limit),
 	clearHistory: (connectionId: string) => call<void>('ClearHistory', connectionId),
 	fetchRows: (id: string, cursor: string, limit: number) => call<RowPage>('FetchRows', id, cursor, limit),

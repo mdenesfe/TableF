@@ -442,3 +442,101 @@ func TestHistoryCompacts(t *testing.T) {
 		t.Fatalf("the newest entry must survive: %+v", all[len(all)-1])
 	}
 }
+
+func TestSqlReadOnly(t *testing.T) {
+	reads := []string{
+		"SELECT * FROM users",
+		"select replace(name, 'a', 'b'), comment from t order by id desc",
+		"WITH x AS (SELECT 1) SELECT * FROM x",
+		"EXPLAIN SELECT 1",
+		"SHOW TABLES",
+		"PRAGMA table_info(users)",
+		"SELECT 'DELETE FROM users' AS s -- UPDATE in a comment",
+	}
+	for _, q := range reads {
+		if !sqlReadOnly(q) {
+			t.Errorf("should read: %s", q)
+		}
+	}
+	writes := []string{
+		"INSERT INTO users VALUES (1)",
+		"update users set x = 1",
+		"DELETE FROM users",
+		"WITH gone AS (DELETE FROM users RETURNING *) SELECT * FROM gone",
+		"EXPLAIN ANALYZE DELETE FROM users",
+		"SELECT * INTO backup FROM users",
+		"DROP TABLE users",
+		"TRUNCATE users",
+		"CALL do_things()",
+		"PRAGMA foreign_keys = OFF",
+		"SELECT * FROM users FOR UPDATE",
+		"CREATE TABLE t (x int)",
+		"GRANT ALL ON users TO bob",
+	}
+	for _, q := range writes {
+		if sqlReadOnly(q) {
+			t.Errorf("should be refused: %s", q)
+		}
+	}
+	if !storeReadOnly("redis", "HGETALL user:1") || storeReadOnly("redis", "DEL user:1") || storeReadOnly("redis", "FLUSHALL") {
+		t.Error("redis")
+	}
+	if !storeReadOnly("mongodb", "db.users.find({age: {$gt: 3}})") || storeReadOnly("mongodb", "db.users.deleteMany({})") ||
+		storeReadOnly("mongodb", "db.users.aggregate([{ $out: 'copy' }])") {
+		t.Error("mongodb")
+	}
+}
+
+func TestReadOnlyConnection(t *testing.T) {
+	svc, id := newSQLite(t)
+	if _, err := svc.ExecuteQuery(id, "CREATE TABLE u (id INTEGER PRIMARY KEY, n TEXT); INSERT INTO u (n) VALUES ('a')"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := svc.store.Get(id)
+	cfg.SafeMode = driver.SafeModeReadOnly
+	if _, err := svc.SaveConnection(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// Reads still work; a script with any write runs nothing at all.
+	if res, err := svc.ExecuteQuery(id, "SELECT count(*) FROM u"); err != nil || res[0].Error != "" {
+		t.Fatalf("read: %v %+v", err, res)
+	}
+	if _, err := svc.ExecuteQuery(id, "SELECT 1; DELETE FROM u"); err == nil || !strings.Contains(err.Error(), "read-only") {
+		t.Fatalf("write should be refused: %v", err)
+	}
+	if _, err := svc.ApplyChanges(id, ChangeSet{Table: "u"}); err != errReadOnlyEdit {
+		t.Fatalf("edits should be refused: %v", err)
+	}
+	res, _ := svc.ExecuteQuery(id, "SELECT count(*) FROM u")
+	if fmt.Sprint(res[0].Rows[0][0]) != "1" {
+		t.Fatalf("data changed: %v", res[0].Rows)
+	}
+	// Back to silent: writes run again.
+	cfg.SafeMode = driver.SafeModeSilent
+	if _, err := svc.SaveConnection(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := svc.ExecuteQuery(id, "DELETE FROM u"); err != nil || res[0].Error != "" {
+		t.Fatalf("write after silent: %v %+v", err, res)
+	}
+}
+
+func TestIdentityAndRoles(t *testing.T) {
+	svc, id := newSQLite(t)
+	info, err := svc.Connect(id)
+	if err != nil || info.CanSwitchRole || info.User != "" {
+		t.Fatalf("SQLite has no users or roles: %+v %v", info, err)
+	}
+	if roles, err := svc.ListRoles(id); err != nil || len(roles) != 0 {
+		t.Fatalf("roles: %v %v", roles, err)
+	}
+	if _, err := svc.UseRole(id, "anon"); err == nil {
+		t.Fatal("switching roles should be refused")
+	}
+	if _, err := svc.ConnectAs(id, "  ", ""); err == nil {
+		t.Fatal("an empty user should be refused")
+	}
+	if _, err := svc.ExecuteQuery(id, "SELECT 1"); err != nil {
+		t.Fatalf("the session should still work: %v", err)
+	}
+}
