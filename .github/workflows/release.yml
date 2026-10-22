@@ -1,7 +1,9 @@
 name: Release
 
 # Builds the desktop apps on native runners (so cgo engines like DuckDB are
-# included on every platform) and attaches them to a GitHub release.
+# included on every platform) and attaches the Windows build to a GitHub
+# release. The macOS build is kept as a CI artifact; the released macOS app
+# is signed and notarized separately.
 on:
   push:
     tags: ['v*']
@@ -60,7 +62,10 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+      # The macOS app is signed with a Developer ID and notarized on a Mac
+      # that holds the certificate, then uploaded to the release by hand;
+      # CI only attaches the Windows build (which includes DuckDB).
       - uses: softprops/action-gh-release@v2
         with:
-          files: TableF-*.zip
+          files: TableF-windows-*.zip
           generate_release_notes: true
