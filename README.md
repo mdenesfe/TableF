@@ -65,15 +65,10 @@ All screenshots use a fictional store database; none of the data is real.
 | Windows 10/11 (x64) | [TableF-windows-amd64.zip](https://github.com/mdenesfe/TableF/releases/latest/download/TableF-windows-amd64.zip) |
 
 All versions and release notes are on the [releases page](https://github.com/mdenesfe/TableF/releases).
-The apps are not code-signed yet:
-
-- **macOS:** unzip and move TableF to Applications. The first time macOS says
-  it can't verify the app: click **Done**, open **System Settings → Privacy &
-  Security** and choose **Open Anyway** next to TableF. Or remove the download
-  quarantine in Terminal:
-  `xattr -dr com.apple.quarantine /Applications/TableF.app`
-- **Windows:** unzip and run `TableF.exe`. If SmartScreen appears, choose
-  **More info → Run anyway**.
+- **macOS:** unzip and move TableF to Applications. The app is signed with a
+  Developer ID and notarized by Apple, so it opens without warnings.
+- **Windows:** unzip and run `TableF.exe`. The Windows build isn't code-signed
+  yet: if SmartScreen appears, choose **More info → Run anyway**.
 
 Linux users can build from source (below) or run the web version.
 
@@ -89,9 +84,10 @@ wails build          # the app ends up in build/bin
 wails dev            # development mode with hot reload
 ```
 
-Release builds for macOS (universal) and Windows are produced by
-`.github/workflows/release.yml` when a `v*` tag is pushed. The apps are not
-code-signed yet; see [Download](#download) for how to open them the first time.
+The Windows release build is produced by `.github/workflows/release.yml` when
+a `v*` tag is pushed. The macOS release is signed and notarized on a Mac that
+holds the Developer ID certificate, with `scripts/release-mac.sh` (it needs
+notarytool credentials saved with `xcrun notarytool store-credentials`).
 
 DuckDB embeds a C++ library and is only included in cgo builds. Cross-compiling
 for Windows from macOS without a mingw toolchain (`CGO_ENABLED=0`) leaves it
