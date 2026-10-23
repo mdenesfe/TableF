@@ -32,6 +32,10 @@ export interface Prefs {
 	keywordCase: KeywordCase;
 	/** Reopen the last connection, tabs and layout on launch. */
 	restoreSession: boolean;
+	/** Look for a newer TableF on launch and every few hours. */
+	checkUpdates: boolean;
+	/** Download a newer version in the background (desktop), ready to install. */
+	downloadUpdates: boolean;
 }
 
 export const rowHeights: Record<Density, number> = { compact: 24, default: 28, comfortable: 34 };
@@ -54,7 +58,9 @@ export const defaults: Prefs = {
 	editorLineNumbers: true,
 	editorTabSize: 2,
 	keywordCase: 'upper',
-	restoreSession: true
+	restoreSession: true,
+	checkUpdates: true,
+	downloadUpdates: true
 };
 
 class PrefsStore {

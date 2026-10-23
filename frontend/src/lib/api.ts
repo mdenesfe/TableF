@@ -26,7 +26,7 @@ type Bound = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
 declare global {
 	interface Window {
-		go?: { core?: { Service?: Bound }; main?: { Desktop?: Bound } };
+		go?: { core?: { Service?: Bound }; main?: { Desktop?: Bound; Updater?: Bound } };
 		/** Wails' window runtime, present in the desktop app. */
 		runtime?: {
 			WindowMinimise(): void;
@@ -35,6 +35,10 @@ declare global {
 			WindowIsFullscreen(): Promise<boolean>;
 			WindowUnfullscreen(): void;
 			Quit(): void;
+			/** Subscribes to a backend event; returns the unsubscribe function. */
+			EventsOn(name: string, cb: (...data: unknown[]) => void): () => void;
+			/** Opens a URL in the system browser. */
+			BrowserOpenURL(url: string): void;
 		};
 	}
 }
@@ -45,6 +49,12 @@ export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test
 
 /** The desktop app on macOS: the header leaves room for the traffic lights. */
 export const isMacDesktop = isDesktop && isMac;
+
+/** Opens a link in the system browser (desktop) or a new tab (web). */
+export function openExternal(url: string) {
+	if (window.runtime?.BrowserOpenURL) window.runtime.BrowserOpenURL(url);
+	else window.open(url, '_blank', 'noopener');
+}
 
 /** The desktop app on Windows/Linux: the window is frameless and the header draws its own controls. */
 export const hasWindowControls = isDesktop && !isMac;

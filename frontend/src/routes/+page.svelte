@@ -7,6 +7,8 @@
 	import { X } from '@lucide/svelte';
 	import { prefs } from '#lib/prefs.svelte.ts';
 	import Preferences from '#lib/components/Preferences.svelte';
+	import UpdateCard from '#lib/components/UpdateCard.svelte';
+	import { updates } from '#lib/updates.svelte.ts';
 	import { setToken, webNeedsToken, hasWindowControls, isMacDesktop } from '#lib/api.ts';
 	import { app } from '#lib/state.svelte.ts';
 	import Home from '#lib/components/Home.svelte';
@@ -42,6 +44,7 @@
 	const finishBoot = () => setTimeout(() => (booting = false), Math.max(0, 600 - (performance.now() - bootStarted)));
 
 	onMount(async () => {
+		updates.start();
 		// Lets CSS size the header to the platform's window chrome.
 		if (isMacDesktop) {
 			document.documentElement.dataset.platform = 'mac';
@@ -98,6 +101,7 @@
 {#if hasWindowControls}<WindowControls onBrand={!app.session} />{/if}
 
 {#if app.prefsOpen}<Preferences onclose={() => (app.prefsOpen = false)} />{/if}
+{#if !booting}<UpdateCard />{/if}
 
 {#if app.toast}
 	<div class="toast" class:error={app.toast.kind === 'error'} role="status">

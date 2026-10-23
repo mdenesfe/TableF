@@ -98,6 +98,7 @@ func main() {
 	}
 	svc := core.NewService(core.NewStore(storePath))
 	desktop := &Desktop{}
+	updater := &Updater{}
 
 	err = wails.Run(&options.App{
 		Title:     "TableF",
@@ -110,10 +111,11 @@ func main() {
 		AssetServer:      &assetserver.Options{Assets: ui.Assets()},
 		OnStartup: func(ctx context.Context) {
 			desktop.ctx = ctx
+			updater.startup(ctx)
 			manageWindowChrome(ctx)
 		},
 		OnShutdown: func(context.Context) { svc.Shutdown() },
-		Bind:       []any{svc, desktop},
+		Bind:       []any{svc, desktop, updater},
 		Menu:       appMenu(),
 		// Off macOS the header draws its own window controls (WindowControls.svelte),
 		// so the native frame goes; resizing, snapping and the shadow stay. On macOS

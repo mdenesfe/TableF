@@ -1,7 +1,9 @@
 <script lang="ts">
-	import { Code, Database, Info, Monitor, Moon, Palette, ShieldCheck, Sun, X } from '@lucide/svelte';
+	import { Code, Database, Info, LoaderCircle, Monitor, Moon, Palette, RefreshCw, ShieldCheck, Sun, X } from '@lucide/svelte';
 	import { prefs, type Density, type KeywordCase, type Theme } from '#lib/prefs.svelte.ts';
 	import { VERSION } from '#lib/version.ts';
+	import { updates } from '#lib/updates.svelte.ts';
+	import { isDesktop } from '#lib/api.ts';
 
 	let { onclose }: { onclose: () => void } = $props();
 
@@ -174,6 +176,24 @@
 								<p class="name">TableF <span class="mono muted">v{VERSION}</span></p>
 								<p class="muted">Free and open-source database client.</p>
 							</div>
+						</div>
+						<p class="group-label">Updates</p>
+						{@render toggle('Check for updates', 'On launch and every few hours, from GitHub releases', p.checkUpdates, (v) => prefs.set('checkUpdates', v))}
+						{#if updates.canInstall || isDesktop}
+							{@render toggle('Download updates automatically', 'Fetched and verified in the background, installed when you restart', p.downloadUpdates, (v) =>
+								prefs.set('downloadUpdates', v)
+							)}
+						{/if}
+						<div class="update-row">
+							<button class="btn sm outline" onclick={() => updates.check(true)} disabled={updates.phase === 'checking' || updates.phase === 'downloading'}>
+								{#if updates.phase === 'checking'}<LoaderCircle size={13} class="spin" />{:else}<RefreshCw size={13} />{/if} Check now
+							</button>
+							<span class="muted small">
+								{#if updates.phase === 'current'}TableF v{VERSION} is the latest version.
+								{:else if updates.phase === 'available' || updates.phase === 'ready' || updates.phase === 'downloading'}TableF {updates.release?.version} is available.
+								{:else if updates.phase === 'error'}{updates.error}
+								{:else if updates.lastChecked}Last checked {updates.lastChecked.toLocaleTimeString()}.{/if}
+							</span>
 						</div>
 						<p class="note muted">Preferences are saved on this device.</p>
 					{/if}
@@ -440,6 +460,31 @@
 		.spacer,
 		.side .reset {
 			display: none;
+		}
+	}
+	.group-label {
+		margin: 1.1rem 0 0.25rem;
+		font-size: 11px;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+		color: var(--muted-foreground);
+	}
+	.update-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 0.5rem;
+	}
+	.update-row .small {
+		font-size: 11.5px;
+	}
+	.update-row :global(.spin) {
+		animation: spin 0.8s linear infinite;
+	}
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
 		}
 	}
 </style>
