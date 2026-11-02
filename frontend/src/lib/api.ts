@@ -156,7 +156,13 @@ export const api = {
 	getColumns: (id: string, schema: string, table: string) => call<Column[]>('GetColumns', id, schema, table),
 	getTableData: (id: string, req: TableDataRequest) => call<TableData>('GetTableData', id, req),
 	getGroups: (id: string, req: GroupRequest) => call<GroupResult>('GetGroups', id, req),
-	executeQuery: (id: string, sql: string) => call<QueryResult[]>('ExecuteQuery', id, sql),
+	executeQuery: async (id: string, sql: string) =>
+		(await call<QueryResult[]>('ExecuteQuery', id, sql)).map((r) => ({
+			...r,
+			columns: r.columns ?? [],
+			columnTypes: r.columnTypes ?? [],
+			rows: r.rows ?? []
+		})),
 	cancelQuery: (id: string) => call<void>('CancelQuery', id),
 	applyChanges: (id: string, cs: ChangeSet) => call<string[]>('ApplyChanges', id, cs),
 	/** Desktop only: native file picker. Returns '' when unavailable or cancelled. */

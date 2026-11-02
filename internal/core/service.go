@@ -846,6 +846,10 @@ func (s *Service) executeQuery(sess *session, script string) ([]QueryResult, err
 			err = xerr
 		}
 		res.DurationMs = float64(time.Since(start).Microseconds()) / 1000
+		// A failed query leaves these nil; the UI expects empty lists.
+		if res.Columns == nil {
+			res.Columns, res.ColumnTypes, res.Rows = []string{}, []string{}, [][]any{}
+		}
 		if err != nil {
 			res.Error = err.Error()
 			results = append(results, res)
